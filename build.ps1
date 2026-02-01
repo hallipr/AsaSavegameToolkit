@@ -16,10 +16,7 @@ Write-Host "Building AsaSavCli into $OutputPath" -ForegroundColor Yellow
 dotnet publish $PSScriptRoot/AsaSavCli/src/AsaSavCli.csproj `
     -c Release `
     -o $OutputPath `
-    --self-contained true `
-    /p:PublishSingleFile=true `
-    /p:IncludeAllContentForSelfExtract=true `
-    /p:PublishTrimmed=true
+    /p:PublishSingleFile=true
 write-Host "Build completed." -ForegroundColor Green
 
 Write-Host "Packing AsaSavegameToolkit NuGet package into $OutputPath" -ForegroundColor Yellow

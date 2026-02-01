@@ -1,6 +1,9 @@
 <Solution>
-  <Folder Name="/AsaSavegameToolkit/" />
-  <Folder Name="/AsaSavegameToolkit/src/">
+  <Folder Name="/AsaSavCli/">
+    <Project Path="AsaSavCli/src/AsaSavCli.csproj" />
+  </Folder>
+  <Folder Name="/AsaSavegameToolkit/">
     <Project Path="AsaSavegameToolkit/src/AsaSavegameToolkit.csproj" />
+    <Project Path="AsaSavegameToolkit/tests/AsaSavegameToolkit.Tests/AsaSavegameToolkit.Tests.csproj" />
   </Folder>
 </Solution>

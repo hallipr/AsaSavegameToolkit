@@ -1,8 +1,5 @@
 using System.CommandLine;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using AsaSavegameToolkit;
-using FracturedJson;
+using Microsoft.Extensions.Logging;
 
 namespace AsaSavCli.Commands;
 
@@ -12,46 +9,47 @@ public class ConvertCommand : CommandDefinition
     {
         var command = new Command("convert", "Convert save file to JSON");
         
-        var saveFileArgument = new Argument<FileInfo>(
-            name: "save-file",
+        var pathArgument = new Argument<FileInfo>(
+            name: "path",
             description: "Path to the save file (.ark or .arkbak)"
         ).ExistingOnly();
+        
+        var outputFileArgument = new Argument<FileInfo?>(
+            name: "output",
+            description: "Path to the output JSON file"
+        );
 
-        command.AddArgument(saveFileArgument);
-        command.SetHandler(Execute, saveFileArgument);
+        command.AddArgument(pathArgument);
+        command.AddArgument(outputFileArgument);
+        AddCommonOptions(command);
+        command.SetHandler(ExecuteAsync, pathArgument, outputFileArgument, VerboseOption, DebugOption);
         
         return command;
     }
 
-    private static void Execute(FileInfo saveFile)
+    private static async Task ExecuteAsync(FileInfo saveFile, FileInfo? outputFile, bool verbose, bool debug)
     {
+        using var loggerFactory = CreateLoggerFactory(verbose, debug);
+        var logger = loggerFactory.CreateLogger<SaveGameConverter>();
+        
         try
         {
-            var savegame = new AsaSavegame();
-            savegame.Read(saveFile.FullName, Environment.ProcessorCount);
-
-            var options = new JsonSerializerOptions
+            var converter = new SaveGameConverter(logger, saveFile);
+            string json = await converter.ConvertAsync();
+            if (outputFile != null)
             {
-                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-                ReferenceHandler = ReferenceHandler.IgnoreCycles
-            };
-
-            string json = JsonSerializer.Serialize(new
+                await File.WriteAllTextAsync(outputFile.FullName, json);
+                logger.LogInformation($"Successfully wrote JSON to: {outputFile.FullName}");
+            }
+            else
             {
-                GameTime = savegame.GameTime,
-                Objects = savegame.Objects,
-                Tribes = savegame.Tribes,
-                Profiles = savegame.Profiles
-            }, options);
-
-            var formatter = new Formatter();
-            string formattedJson = formatter.Reformat(json, 120);
-            Console.WriteLine(formattedJson);
+                Console.WriteLine(json);
+            }
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error reading save file: {ex.Message}");
-            Console.Error.WriteLine(ex.StackTrace);
+            logger.LogError($"Error reading save file: {ex.Message}");
+            logger.LogError(ex.StackTrace);
             Environment.Exit(1);
         }
     }
