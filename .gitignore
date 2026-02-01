@@ -1,0 +1,7 @@
+.work/
+bin/
+obj/
+*.user
+*.suo
+*.log
+*.tmp
