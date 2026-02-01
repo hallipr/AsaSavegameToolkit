@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/AsaSavegameToolkit/" />
+  <Folder Name="/AsaSavegameToolkit/src/">
+    <Project Path="AsaSavegameToolkit/src/AsaSavegameToolkit.csproj" />
+  </Folder>
+</Solution>
