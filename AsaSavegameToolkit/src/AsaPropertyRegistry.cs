@@ -71,7 +71,7 @@ namespace AsaSavegameToolkit
                     {
                         archive.Position = startPosition;
                         archive.SkipBytes(dataSize);
-                        returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0,0);
+                        returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, 0);
                     }
                     else
                     {
@@ -104,7 +104,7 @@ namespace AsaSavegameToolkit
                     }
                     //returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, mapValue);
                     return returnProperty;
-                    
+
                 case "ByteProperty":
                     var byteType = archive.ReadName();
                     if (byteType.Equals(AsaName.NameNone))

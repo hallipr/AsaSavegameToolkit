@@ -12,6 +12,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\AsaSavegameToolkit.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\assets\**" CopyToOutputDirectory="PreserveNewest" LinkBase="assets" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
   </ItemGroup>
 

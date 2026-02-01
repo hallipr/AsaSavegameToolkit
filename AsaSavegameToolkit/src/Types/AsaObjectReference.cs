@@ -28,7 +28,7 @@ namespace AsaSavegameToolkit.Types
 
         public AsaObjectReference(AsaArchive archive, bool useNameTable)
         {
-            if (useNameTable && archive.NameTable.Count>0)
+            if (useNameTable && archive.NameTable.Count > 0)
             {
                 bool isName = archive.ReadShort() == 1;
                 if (isName)
@@ -48,7 +48,7 @@ namespace AsaSavegameToolkit.Types
             int objectType = archive.ReadInt();
 
 
-            if(objectType == -1)
+            if (objectType == -1)
             {
                 type = TYPE_UNKNOWN;
                 value = string.Empty;

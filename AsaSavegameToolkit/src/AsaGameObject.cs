@@ -7,8 +7,6 @@ namespace AsaSavegameToolkit
 {
     public class AsaGameObject
     {
-
-
         public Guid Guid { get; set; } = Guid.Empty;
         public string Blueprint { get; private set; } = string.Empty;
         public AsaName ClassName { get; private set; } = AsaName.NameNone;
@@ -27,8 +25,8 @@ namespace AsaSavegameToolkit
         public readonly Dictionary<AsaName, AsaGameObject> Components = new Dictionary<AsaName, AsaGameObject>();
         public IEnumerable<AsaName> ParentNames => Names.Skip(1).ToList();
         public int DataFileIndex { get; private set; } = 0;
-        public long PropertyOffset { get;private set; } = 0;
-        
+        public long PropertyOffset { get; private set; } = 0;
+
 
         public AsaGameObject(AsaArchive archive)
         {
@@ -36,7 +34,7 @@ namespace AsaSavegameToolkit
 
             var bluePrintPath = archive.ReadString();
 
-            ClassName = AsaName.From(bluePrintPath.Substring(bluePrintPath.LastIndexOf(".")+1));
+            ClassName = AsaName.From(bluePrintPath.Substring(bluePrintPath.LastIndexOf(".") + 1));
 
             var shouldBeZero = archive.ReadInt();
 
@@ -48,7 +46,7 @@ namespace AsaSavegameToolkit
             }
             bool fromDataFile = archive.ReadBool();
             DataFileIndex = archive.ReadInt();
-            
+
             var hasLocation = archive.ReadBool();
             if (hasLocation)
             {
@@ -108,13 +106,13 @@ namespace AsaSavegameToolkit
             AsaObjectReference? classRef = GetPropertyValue<AsaObjectReference?>("ItemArchetype", 0, null);
             if (classRef != null)
             {
-                var classString = classRef.Value.Substring(classRef.Value.LastIndexOf('.')+1);
+                var classString = classRef.Value.Substring(classRef.Value.LastIndexOf('.') + 1);
 
                 ClassName = AsaName.From(classString);
             }
 
             AsaProperty<dynamic>? itemQty = properties.FirstOrDefault(p => p.Name == "ItemQuantity");
-            if (itemQty != null && itemQty.Value ==0)
+            if (itemQty != null && itemQty.Value == 0)
             {
                 properties.Remove(itemQty);
                 properties.Add(new AsaProperty<dynamic>("ItemQuantity", "UInt32Property", 0, 0, 1));
@@ -130,11 +128,11 @@ namespace AsaSavegameToolkit
             ClassName = archive.ReadName();
             IsItem = archive.ReadBool();//? not isitem - always false?
 
-            int nameCount = archive.ReadInt();           
+            int nameCount = archive.ReadInt();
             Names.Clear();
             while (nameCount-- > 0)
             {
-                if(archive.SaveVersion < 13)
+                if (archive.SaveVersion < 13)
                 {
                     Names.Add(archive.ReadName());
                 }
@@ -146,8 +144,8 @@ namespace AsaSavegameToolkit
 
             }
 
-            
-           
+
+
             DataFileIndex = archive.ReadInt();
             archive.SkipBytes(1);
 
@@ -170,9 +168,9 @@ namespace AsaSavegameToolkit
 
             long lastPropertyPosition = archive.Position;
             if (archive.Position == archive.Limit)
-            { 
+            {
                 //No properties to read
-                return; 
+                return;
             }
 
             try

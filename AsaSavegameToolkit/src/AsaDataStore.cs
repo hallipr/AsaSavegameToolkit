@@ -15,7 +15,7 @@ namespace AsaSavegameToolkit
         }
 
 
-        public int SaveVersion { get;internal set; } = 0;
+        public int SaveVersion { get; internal set; } = 0;
         public int StoreSize { get; internal set; } = 0;
         public int NametableOffset { get; internal set; } = 0;
 
@@ -23,17 +23,17 @@ namespace AsaSavegameToolkit
 
         private List<AsaGameObject> gameObjects = new List<AsaGameObject>();
 
-        public AsaDataStore(byte[] storeData) 
+        public AsaDataStore(byte[] storeData)
         {
 
-            SaveVersion = BitConverter.ToInt16(storeData, 0)-1024;
-            StoreSize = BitConverter.ToInt16(storeData, 4);                           
+            SaveVersion = BitConverter.ToInt16(storeData, 0) - 1024;
+            StoreSize = BitConverter.ToInt16(storeData, 4);
             NametableOffset = BitConverter.ToInt16(storeData, 8);
 
-            byte[] dataBytes = storeData.AsSpan().Slice(12,storeData.Length-12).ToArray();
+            byte[] dataBytes = storeData.AsSpan().Slice(12, storeData.Length - 12).ToArray();
 
             var decompressedData = ZlibDecompress(dataBytes).AsSpan();
-            
+
 
             dataBytes = new byte[0];
             byte[] rawBytes;
@@ -111,14 +111,14 @@ namespace AsaSavegameToolkit
             }
             rawBytes = new byte[0];
 
-            
-            foreach(var gameObject in gameObjects)
+
+            foreach (var gameObject in gameObjects)
             {
-                gameObject.Guid = Guid.NewGuid();                  
+                gameObject.Guid = Guid.NewGuid();
             }
 
             //add reference to new statuscomponent id
-            if(gameObjects.Count > 1)
+            if (gameObjects.Count > 1)
             {
                 var statusObject = gameObjects.First(o => o.ClassString.Contains("CharacterStatus")) ?? gameObjects[1];
 

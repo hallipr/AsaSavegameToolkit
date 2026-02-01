@@ -1,6 +1,6 @@
 ﻿namespace AsaSavegameToolkit.Structs
 {
-    public class AsaColor 
+    public class AsaColor
     {
         private readonly byte r;
         private readonly byte g;

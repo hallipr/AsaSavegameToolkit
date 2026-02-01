@@ -33,7 +33,7 @@ namespace AsaSavegameToolkit
 
         private void readTribes(AsaArchive archive)
         {
- 
+
             foreach (var tribePointer in tribeDataPointers)
             {
                 try
@@ -44,11 +44,11 @@ namespace AsaSavegameToolkit
 
 
                     Tribes.Add(tribeObject);
-    
+
                 }
-                catch 
+                catch
                 {
-                
+
                 }
             }
 
@@ -112,7 +112,7 @@ namespace AsaSavegameToolkit
                 long offset = archive.ReadInt() + tribeDataStart;
                 int size = archive.ReadInt();
 
-                tribeDataPointers.Add(new Tuple<long, long, long>(tribeId,offset,size));
+                tribeDataPointers.Add(new Tuple<long, long, long>(tribeId, offset, size));
             }
 
         }

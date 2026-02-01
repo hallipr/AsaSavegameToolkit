@@ -70,10 +70,10 @@ namespace AsaSavegameToolkit
             propertiesOffset = archive.ReadInt();
             var shouldBeZero = archive.ReadInt();
         }
-        
+
         public void ReadProperties(AsaArchive archive)
         {
-            ReadProperties(archive,true);
+            ReadProperties(archive, true);
         }
 
         public void ReadProperties(AsaArchive archive, bool usePropertiesOffset)
@@ -83,7 +83,7 @@ namespace AsaSavegameToolkit
             if (usePropertiesOffset)
             {
                 archive.Position = propertiesOffset;
-            }          
+            }
 
             try
             {

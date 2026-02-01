@@ -74,7 +74,7 @@
                     }
 
                     outputStream.Flush();
-                }                
+                }
 
                 return outputStream.ToArray();
             }

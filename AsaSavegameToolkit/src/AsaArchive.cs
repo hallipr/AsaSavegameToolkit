@@ -12,9 +12,9 @@ namespace AsaSavegameToolkit
         private readonly BinaryReader mbbReader;
 
 
-        public Dictionary<int,string> ConstantNameTable { get; set; } = new Dictionary<int,string>();
+        public Dictionary<int, string> ConstantNameTable { get; set; } = new Dictionary<int, string>();
         public Dictionary<int, string> NameTable { get; set; } = new Dictionary<int, string>();
-        public bool HasNameTable => (NameTable != null && NameTable.Count > 0) || (ConstantNameTable!=null && ConstantNameTable.Count > 0);
+        public bool HasNameTable => (NameTable != null && NameTable.Count > 0) || (ConstantNameTable != null && ConstantNameTable.Count > 0);
         public bool HasInstanceInNameTable { get; private set; }
 
         public long Position
@@ -98,7 +98,7 @@ namespace AsaSavegameToolkit
         {
             int id = mbbReader.ReadInt32();
             string name = string.Empty;
-            if(NameTable.ContainsKey(id)) 
+            if (NameTable.ContainsKey(id))
             {
                 name = NameTable[id];
             }
@@ -113,7 +113,7 @@ namespace AsaSavegameToolkit
                     else
                     {
                         name = string.Concat("Unknown_", id);
-                    }                    
+                    }
                 }
                 else
                 {
@@ -184,7 +184,7 @@ namespace AsaSavegameToolkit
             int length = ReadByte();
             SkipBytes(1);
             return UTF8Encoding.UTF8.GetString(ReadBytes(length - 1));
-           
+
         }
 
         #endregion read data

@@ -34,7 +34,7 @@ namespace AsaSavegameToolkit
 
             foreach (var aObject in Objects)
             {
-                aObject.ReadProperties(archive,false);
+                aObject.ReadProperties(archive, false);
             }
 
         }
