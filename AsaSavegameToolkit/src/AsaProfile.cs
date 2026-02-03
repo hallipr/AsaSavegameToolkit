@@ -55,26 +55,5 @@ namespace AsaSavegameToolkit
                 return false;
             }
         }
-
-        public static bool TryReadFromFile(string filename, [NotNullWhen(true)] out AsaProfile? result)
-        {
-            if (!File.Exists(filename))
-            {
-                result = null;
-                return false;
-            }
-
-            try
-            {
-                using var ms = new MemoryStream(File.ReadAllBytes(filename));
-                using var archive = new AsaArchive(ms);
-                return TryRead(archive, out result);
-            }
-            catch
-            {
-                result = null;
-                return false;
-            }
-        }
     }
 }

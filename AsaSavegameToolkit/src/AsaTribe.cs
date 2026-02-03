@@ -45,37 +45,5 @@ namespace AsaSavegameToolkit
                 return false;
             }
         }
-
-        public static bool TryReadFromFile(string filename, Dictionary<int, string> nameTable, [NotNullWhen(true)] out AsaTribe? result)
-        {
-            if (!File.Exists(filename))
-            {
-                result = null;
-                return false;
-            }
-
-            try
-            {
-                var timestamp = File.GetLastWriteTimeUtc(filename);
-
-                using var ms = new MemoryStream(File.ReadAllBytes(filename));
-                using var archive = new AsaArchive(ms);
-                
-                archive.NameTable = nameTable;
-
-                if (TryRead(archive, true, out result))
-                {
-                    result.TribeFileTimestamp = timestamp;
-                    return true;
-                }
-
-                return false;
-            }
-            catch
-            {
-                result = null;
-                return false;
-            }
-        }
     }
 }

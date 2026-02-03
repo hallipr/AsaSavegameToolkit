@@ -1,7 +1,7 @@
-using AsaSavegameToolkit.Extensions;
 using AsaSavegameToolkit.Properties;
 using AsaSavegameToolkit.Structs;
 using AsaSavegameToolkit.Types;
+
 using System.Diagnostics.CodeAnalysis;
 
 namespace AsaSavegameToolkit

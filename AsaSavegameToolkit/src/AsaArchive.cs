@@ -1,7 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
-using System.Numerics;
+using System.IO;
 using System.Text;
 
+using AsaSavegameToolkit.Analysis;
 using AsaSavegameToolkit.Types;
 
 namespace AsaSavegameToolkit
@@ -10,6 +11,8 @@ namespace AsaSavegameToolkit
     public class AsaArchive : IDisposable
     {
         private readonly Stream _stream;
+        private readonly string? _debugOutputPath;
+        private readonly string _fileName;
         private readonly BinaryReader _reader;
 
         /// <summary>
@@ -32,9 +35,11 @@ namespace AsaSavegameToolkit
         public long Limit => _stream.Length;
         public short SaveVersion { get; internal set; }
 
-        public AsaArchive(Stream stream)
+        public AsaArchive(Stream stream, string? debugOutputPath, string fileName)
         {
             _stream = stream ?? throw new ArgumentNullException(nameof(stream));
+            _debugOutputPath = debugOutputPath;
+            _fileName = fileName;
             _reader = new BinaryReader(_stream);
         }
 
@@ -183,11 +188,42 @@ namespace AsaSavegameToolkit
 
         #endregion
 
+        /// <summary>
+        /// Gets a coverage analyzer for this archive
+        /// </summary>
+        public Analysis.FileCoverageAnalyzer GetCoverageAnalyzer()
+        {
+            return new Analysis.FileCoverageAnalyzer(SectionsRead, Limit);
+        }
+
         public void Dispose()
         {
+            if(!string.IsNullOrEmpty(_debugOutputPath))
+            {
+                var fileName = Path.ChangeExtension(_fileName, ".bin");
+                var filePath = Path.Join(_debugOutputPath, "source", fileName);
+                WriteFileStream(filePath);
+
+                var outFile = Path.Join(_debugOutputPath, "source", Path.ChangeExtension(fileName, ".html"));
+                var analyzer = new FileCoverageAnalyzer(SectionsRead, _stream.Length);
+                File.WriteAllText(outFile, analyzer.GenerateHtmlVisualization());
+            }
             _stream?.Dispose();
             _reader?.Dispose();
             GC.SuppressFinalize(this);
+        }
+
+        private void WriteFileStream(string filePath)
+        {
+            var directory = Path.GetDirectoryName(filePath) ?? throw new Exception("Invalid file path");
+            if (!Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            using var fileStream = File.OpenWrite(filePath);
+            _stream.Position = 0;
+            _stream.CopyTo(fileStream);
         }
 
         private class ReadTracker : IDisposable

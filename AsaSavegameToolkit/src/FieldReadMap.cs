@@ -3,36 +3,25 @@ namespace AsaSavegameToolkit;
 
 public class FieldReadMap
 {
-    private readonly List<ReadSection> _sectionsRead;
-    private readonly List<SkippedSection> _sectionsSkipped;
-
-    public FieldReadMap(int length, List<ReadSection> sectionsRead, List<SkippedSection> sectionsSkipped)
+    public FieldReadMap(long length, List<ReadSection> sectionsRead, List<SkippedSection> sectionsSkipped)
     {
         Length = length;
         SectionsRead = sectionsRead;
         SectionsSkipped = sectionsSkipped;
     }
 
-    public int Length { get; }
+    public long Length { get; }
 
     public List<ReadSection> SectionsRead
     {
-        get => _sectionsRead;
-        set
-        {
-            _sectionsRead.Clear();
-            _sectionsRead.AddRange(value.OrderBy(x => x.Offset).ThenByDescending(x => x.Length));
-        }
+        get;
+        set => field = [.. value.OrderBy(x => x.Offset).ThenByDescending(x => x.Length)];
     }
 
     public List<SkippedSection> SectionsSkipped
     {
-        get => _sectionsSkipped;
-        set
-        {
-            _sectionsSkipped.Clear();
-            _sectionsSkipped.AddRange(value.OrderBy(x => x.Offset).ThenByDescending(x => x.Length));
-        }
+        get;
+        set => field = [.. value.OrderBy(x => x.Offset).ThenByDescending(x => x.Length)];
     }
 }
 
@@ -61,6 +50,14 @@ public record ReadSection
     public long Offset { get; init; }
     public long Length { get; init; }
     public string Type { get; init; }
+    
+    /// <summary>
+    /// Indicates parser completeness for this section.
+    /// True = Section fully parsed and all bytes understood
+    /// False = Section identified but parser is incomplete/buggy (some bytes not understood)
+    /// This is a declarative statement about implementation quality, not computed from offsets.
+    /// Example: "bytes 1000-5000 are the NameTable (Complete=false means parser needs work)"
+    /// </summary>
     public bool Complete { get; }
 
     public ReadSection(long offset, long length, string type, bool complete)
@@ -71,5 +68,5 @@ public record ReadSection
         Complete = complete;
     }
 
-    public override string ToString() => $"[{Offset:X8}-{Offset + Length - 1:X8}] {Type}";
+    public override string ToString() => $"[{Offset:X8}-{Offset + Length - 1:X8}] {Type}" + (Complete ? "" : " (incomplete)");
 }

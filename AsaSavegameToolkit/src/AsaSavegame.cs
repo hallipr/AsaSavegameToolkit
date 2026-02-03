@@ -1,14 +1,12 @@
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Runtime.Serialization;
-using System.Text.Json;
 
 using AsaSavegameToolkit.Extensions;
 using AsaSavegameToolkit.Files;
 using AsaSavegameToolkit.Structs;
 
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 
 namespace AsaSavegameToolkit
 {
@@ -20,11 +18,16 @@ namespace AsaSavegameToolkit
         private readonly List<AsaTribe> _tribeData = [];
         private readonly List<AsaProfile> _profileData = [];
         private readonly Dictionary<Guid, AsaLocation> _actorLocations = [];
+        private readonly ILogger _logger;
+
+        public AsaSavegame(ILogger logger)
+        {
+            _logger = logger;
+        }
 
         public short SaveVersion { get; private set; }
         public double GameTime { get; private set; }
         public List<string> DataFiles { get; } = [];
-        public Dictionary<string, FieldReadMap> FieldReads = [];
         public AsaGameObject[] Objects => [.. _gameObjects.Values];
         public AsaTribe[] Tribes => [.. _tribeData];
         public AsaProfile[] Profiles => [.. _profileData];
@@ -46,153 +49,107 @@ namespace AsaSavegameToolkit
             return _gameObjects.TryGetValue(guid, out gameObject);
         }
 
-        public bool TryRead(string filename, int maxCores)
+        public void Read(string filename, int maxCores)
         {
             ArgumentException.ThrowIfNullOrEmpty(filename);
             if (!File.Exists(filename))
             {
-                return false;
+                throw new FileNotFoundException("Save file not found", filename);
             }
 
-            try
+            _saveFilename = filename;
+            string savePath = Path.GetDirectoryName(_saveFilename) ?? AppContext.BaseDirectory ?? string.Empty;
+
+            string sqlConnectionString = $"Data Source={_saveFilename};Filename={_saveFilename};Mode=ReadOnly";
+
+            using (var connection = new SqliteConnection(sqlConnectionString))
             {
-                _saveFilename = filename;
-                string savePath = Path.GetDirectoryName(_saveFilename) ?? AppContext.BaseDirectory ?? string.Empty;
+                connection.Open();
+                _logger.LogInformation("Reading header");
 
-                string sqlConnectionString = $"Data Source={_saveFilename};Filename={_saveFilename};Mode=ReadOnly";
+                ReadSaveHeader(connection);
 
-                using (var connection = new SqliteConnection(sqlConnectionString))
-                {
-                    connection.Open();
+                TryReadGameData(connection, maxCores);
+                TryReadActorLocations(connection);
+                TryReadStoredTribesAndPlayers(connection);
 
-                    if (!TryReadSaveHeader(connection))
-                    {
-                        return false;
-                    }
-
-                    TryReadGameData(connection, maxCores);
-                    TryReadActorLocations(connection);
-                    TryReadStoredTribesAndPlayers(connection);
-
-                    connection.Close();
-                }
-
-                SqliteConnection.ClearAllPools();
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-
-                if (_tribeData.Count == 0)
-                {
-                    TryReadTribeFiles(savePath, maxCores);
-                }
-
-                if (_profileData.Count == 0)
-                {
-                    TryReadProfileFiles(savePath, maxCores);
-                }
-
-                return true;
+                connection.Close();
             }
-            catch
+
+            SqliteConnection.ClearAllPools();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+
+            if (_tribeData.Count == 0)
             {
-                return false;
+                TryReadTribeFiles(savePath, maxCores);
+            }
+
+            if (_profileData.Count == 0)
+            {
+                TryReadProfileFiles(savePath, maxCores);
             }
         }
 
-        private bool TryReadSaveHeader(SqliteConnection connection)
+        private void ReadSaveHeader(SqliteConnection connection)
         {
-            try
-            {
-                using var commandHeader = new SqliteCommand("SELECT value FROM custom WHERE key = 'SaveHeader'", connection);
-                using var reader = commandHeader.ExecuteReader();
+            using var commandHeader = new SqliteCommand($"SELECT value FROM custom WHERE key = 'SaveHeader'", connection);
+            using var reader = commandHeader.ExecuteReader();
                 
-                while (reader.Read())
+            while (reader.Read())
+            {
+                if (TryGetSqlBytes(reader, 0, out var dataBytes))
                 {
-                    if (TryGetSqlBytes(reader, 0, out var dataBytes))
+                    using var stream = new MemoryStream(dataBytes);
+                    using var archive = new AsaArchive(stream, DebugOutputPath, "SaveHeader");
+
+                    var header = AsaSaveHeader.Read(archive);
+
+                    this.SaveVersion = header!.SaveVersion;
+                    this.GameTime = header.GameTime;
+                    this.DataFiles.AddRange(header.DataFiles);
+
+                    foreach (var (key, value) in header.NameTable)
                     {
-                        using var ms = new MemoryStream(dataBytes);
-                        using var archive = new AsaArchive(ms);
+                        this._nameTable[key] = value;
+                    }
 
-                        if (!AsaSaveHeader.TryRead(archive, out var header))
-                        {
-                            FieldReads["SaveHeader"] = new FieldReadMap(dataBytes.Length, archive.SectionsRead, archive.SectionsSkipped);
-                            return false;
-                        }
-
-                        this.SaveVersion = header!.SaveVersion;
-                        this.GameTime = header.GameTime;
-                        this.DataFiles.AddRange(header.DataFiles);
-
-                        foreach (var (key, value) in header.NameTable)
-                        {
-                            this._nameTable[key] = value;
-                        }
-
-                        WriteDebugFile("SaveHeader.json", header);
+                    if(DebugOutputPath != null)
+                    {
+                        DebugOutput.WriteSerializedJson(Path.Join(DebugOutputPath, $"SaveHeader.json"), header);
                     }
                 }
-
-                return true;
             }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private void WriteDebugFile(string fileName, object value)
-        {
-            var formatter = new FracturedJson.Formatter();
-            if(string.IsNullOrEmpty(DebugOutputPath))
-            {
-                return;
-            }
-
-            if(!Directory.Exists(DebugOutputPath))
-            {
-                Directory.CreateDirectory(DebugOutputPath);
-            }
-
-            var path = Path.Join(DebugOutputPath, fileName);
-            var json = formatter.Serialize(value);
-            File.WriteAllText(path, json);
         }
 
         private bool TryReadGameData(SqliteConnection connection, int maxCores)
         {
-            try
-            {
-                var gameData = new Dictionary<Guid, byte[]>();
+            var gameData = new Dictionary<Guid, byte[]>();
 
-                using (var commandData = new SqliteCommand("SELECT key, value FROM game", connection))
+            using (var commandData = new SqliteCommand("SELECT key, value FROM game", connection))
+            {
+                using var readerData = commandData.ExecuteReader();
+                while (readerData.Read())
                 {
-                    using var readerData = commandData.ExecuteReader();
-                    while (readerData.Read())
+                    if (TryGetSqlBytes(readerData, 0, out var keyBytes) &&
+                        TryGetSqlBytes(readerData, 1, out var valueBytes))
                     {
-                        if (TryGetSqlBytes(readerData, 0, out var keyBytes) &&
-                            TryGetSqlBytes(readerData, 1, out var valueBytes))
-                        {
-                            Guid guid = keyBytes.ToGuid();
-                            gameData.TryAdd(guid, valueBytes);
-                        }
+                        Guid guid = keyBytes.ToGuid();
+                        gameData.TryAdd(guid, valueBytes);
                     }
                 }
-
-                if (gameData.Count == 0)
-                {
-                    return false;
-                }
-
-                return TryParseGameObjects(gameData, maxCores);
             }
-            catch
-            {
-                return false;
-            }
+
+            return TryParseGameObjects(gameData, maxCores);
         }
 
         private bool TryParseGameObjects(Dictionary<Guid, byte[]> gameData, int maxCores)
         {
+            if(gameData.Count == 0)
+            {
+                return false;
+            }
+
             _gameObjects.Clear();
 
             var objectBag = new ConcurrentDictionary<Guid, AsaGameObject>();
@@ -202,7 +159,7 @@ namespace AsaSavegameToolkit
                 try
                 {
                     using var ms = new MemoryStream(objectData.Value);
-                    using var archive = new AsaArchive(ms);
+                    using var archive = new AsaArchive(ms, DebugOutputPath, objectData.Key.ToString());
                     
                     archive.NameTable = _nameTable;
                     archive.SaveVersion = SaveVersion;
@@ -220,16 +177,17 @@ namespace AsaSavegameToolkit
                         }
 
                         objectBag.TryAdd(gameObject.Guid, gameObject);
-                        WriteDebugFile($"{objectData.Key}.json", gameObject);
-                    }
-                    else
-                    {
-                        WriteDebugFile($"{objectData.Key}.json", new FieldReadMap(objectData.Value.Length, archive.SectionsRead, archive.SectionsSkipped));
+
+
+                        if (DebugOutputPath != null)
+                        {
+                            DebugOutput.WriteSerializedJson(Path.Join(DebugOutputPath, $"{objectData.Key}.json"), gameObject);
+                        }
                     }
                 }
                 catch
                 {
-                    // Skip failed objects
+                    _logger.LogError("Failed to parse game object {Key}", objectData.Key);
                 }
             });
 
@@ -253,7 +211,7 @@ namespace AsaSavegameToolkit
                     if (TryGetSqlBytes(reader, 0, out var locationBytes))
                     {
                         using var ms = new MemoryStream(locationBytes);
-                        using var archive = new AsaArchive(ms);
+                        using var archive = new AsaArchive(ms, DebugOutputPath, "ActorTransforms");
                         
                         Guid objectId = archive.ReadBytes(16).ToGuid();
                         while (objectId != Guid.Empty)
@@ -291,8 +249,9 @@ namespace AsaSavegameToolkit
                     if (TryGetSqlBytes(reader, 0, out var customBytes))
                     {
                         using var ms = new MemoryStream(customBytes);
-                        using var archive = new AsaArchive(ms);
-                        
+                        using var archive = new AsaArchive(ms, DebugOutputPath, "GameModeCustomBytes");
+                        archive.NameTable = _nameTable;
+
                         if (AsaTribeStore.TryRead(archive, out var store))
                         {
                             _tribeData.AddRange(store.Tribes);
@@ -319,8 +278,13 @@ namespace AsaSavegameToolkit
 
                 Parallel.ForEach(tribeFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, tribeFile =>
                 {
-                    if (AsaTribe.TryReadFromFile(tribeFile, _nameTable, out var tribe))
+                    using var ms = new MemoryStream(File.ReadAllBytes(tribeFile));
+                    using var archive = new AsaArchive(ms, DebugOutputPath, tribeFile);
+                    archive.NameTable = _nameTable;
+
+                    if (AsaTribe.TryRead(archive, usePropertiesOffset: true, out var tribe))
                     {
+                        tribe.TribeFileTimestamp = File.GetLastWriteTimeUtc(tribeFile);
                         tribeBag.Add(tribe);
                     }
                 });
@@ -343,7 +307,10 @@ namespace AsaSavegameToolkit
 
                 Parallel.ForEach(profileFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, profileFile =>
                 {
-                    if (AsaProfile.TryReadFromFile(profileFile, out var profile))
+                    using var ms = new MemoryStream(File.ReadAllBytes(profileFile));
+                    using var archive = new AsaArchive(ms, DebugOutputPath, profileFile);
+
+                    if (AsaProfile.TryRead(archive, out var profile))
                     {
                         profileBag.Add(profile);
                     }
