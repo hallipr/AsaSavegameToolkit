@@ -1,461 +1,614 @@
-﻿using AsaSavegameToolkit.Extensions;
-using AsaSavegameToolkit.Propertys;
+using AsaSavegameToolkit.Properties;
 using AsaSavegameToolkit.Structs;
 using AsaSavegameToolkit.Types;
-using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Xml;
+using System.Diagnostics.CodeAnalysis;
 
 namespace AsaSavegameToolkit
 {
-    public class AsaPropertyRegistry
+    public static class AsaPropertyRegistry
     {
-
-        public static AsaProperty<dynamic> ReadProperty(AsaArchive archive)
+        public static bool TryReadProperty(AsaArchive archive, [NotNullWhen(true)] out AsaProperty<dynamic>? property)
         {
-            return ReadProperty(archive, false);
+            return TryReadProperty(archive, false, out property);
         }
 
-        public static AsaProperty<dynamic> ReadProperty(AsaArchive archive, bool inArray)
+        public static bool TryReadProperty(AsaArchive archive, bool inArray, [NotNullWhen(true)] out AsaProperty<dynamic>? property)
         {
-            var keyName = archive.ReadName();
+            ArgumentNullException.ThrowIfNull(archive);
 
-            if (keyName == null || keyName.Equals(AsaName.NameNone))
-            {
-                return null;
-            }
-
-            var valueTypeName = archive.ReadName();
-            if (valueTypeName == null)
-            {
-                return null;
-            }
-
-            var dataSize = archive.ReadInt();
-            var position = archive.ReadInt();
-            var startPosition = archive.Position;
-
-
-            AsaProperty<dynamic> returnProperty = null;
-
-            switch (valueTypeName.Name)
-            {
-                case "BoolProperty":
-                    returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, ReadPropertyValue(valueTypeName, archive));
-                    return returnProperty;
-
-                case "FloatProperty":
-                case "IntProperty":
-                case "Int8Property":
-                case "DoubleProperty":
-                case "UInt32Property":
-                case "UInt64Property":
-                case "UInt16Property":
-                case "Int16Property":
-                case "Int64Property":
-                case "StrProperty":
-                case "NameProperty":
-                case "SoftObjectProperty":
-                case "ObjectProperty":
-
-                    returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, archive.ReadByte(), ReadPropertyValue(valueTypeName, archive));
-                    return returnProperty;
-
-                case "StructProperty":
-                    dynamic structType = archive.ReadName();
-                    if (structType == null)
-                    {
-                        archive.Position = startPosition;
-                        archive.SkipBytes(dataSize);
-                        returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, 0);
-                    }
-                    else
-                    {
-                        returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, archive.ReadByte(), ReadStructPropertyValue(archive, dataSize, structType, inArray));
-
-                    }
-                    return returnProperty;
-
-
-                case "ArrayProperty":
-                    var a = ReadArrayProperty(keyName, position, archive, dataSize);
-                    returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, a.Value);
-                    return returnProperty;
-
-                case "MapProperty":
-
-
-                    dynamic? mapValue = null;
-                    try
-                    {
-                        mapValue = ReadMapProperty(archive);
-                        returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, mapValue);
-                    }
-                    catch
-                    {
-                        archive.Position = startPosition;
-                        archive.SkipBytes(dataSize);
-                        returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, 0);
-
-                    }
-                    //returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, mapValue);
-                    return returnProperty;
-
-                case "ByteProperty":
-                    var byteType = archive.ReadName();
-                    if (byteType.Equals(AsaName.NameNone))
-                    {
-                        returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, archive.ReadByte(), archive.ReadByte());
-                    }
-                    else
-                    {
-                        returnProperty = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, archive.ReadByte(), archive.ReadName());
-                    }
-
-                    return returnProperty;
-
-                default:
-                    return null;
-            }
-
-            return null;
-        }
-
-
-        private static dynamic? ReadMapProperty(AsaArchive archive)
-        {
-            var keyType = archive.ReadName();
-            var valueType = archive.ReadName();
-            var byteUnknown = archive.ReadByte();
-            var skipCount = archive.ReadInt();
-            var mapCount = archive.ReadInt();
-
-            List<AsaProperty<dynamic>> property = new List<AsaProperty<dynamic>>();
-            AsaName? propertyName = AsaName.NameNone;
-
-            for (int mapIndex = 0; mapIndex < mapCount; mapIndex++)
-            {
-                List<AsaProperty<dynamic>> propertyValues = new List<AsaProperty<dynamic>>();
-
-
-                switch (keyType.Name)
-                {
-                    case "NameProperty":
-                        property.Add(ReadStructMap(archive, keyType, valueType));
-
-                        break;
-                    case "ObjectProperty":
-                        var mapObjectRef = new AsaObjectReference(archive, true);
-                        archive.SkipBytes(1);
-
-
-                        break;
-                    default:
-
-                        propertyName = archive.ReadName();
-                        var unknown0 = archive.ReadInt(); //0
-
-                        while (true)
-                        {
-                            AsaName? subKeyName = archive.ReadName();
-                            if (subKeyName is null) break;
-                            if (subKeyName.Equals(AsaName.NameNone))
-                            {
-                                break;
-                            }
-
-                            var dataType = archive.ReadName();
-                            var unknown1 = archive.ReadInt(); //8
-                            var unknown2 = archive.ReadInt(); //0
-
-                            archive.SkipBytes(1);
-                            var keyValue = ReadPropertyValue(dataType, archive);
-                            propertyValues.Add(new AsaProperty<dynamic>(subKeyName.Name, dataType.Name, 0, 0, keyValue));
-
-                        }
-
-                        if (propertyValues.Count > 0)
-                        {
-                            property.Add(new AsaProperty<dynamic>(propertyName.Name, "PropertyList", 0, 0, propertyValues));
-                        }
-
-                        break;
-                }
-            }
-
-            return property;
-        }
-
-        private static AsaProperty<dynamic>? ReadStructMap(AsaArchive archive, AsaName keyType, AsaName valueType)
-        {
-            List<AsaProperty<dynamic>> propertyValues = new List<AsaProperty<dynamic>>();
-
-            var keyName = ReadPropertyValue(keyType, archive);
-
-            while (true)
-            {
-                string valueKeyName = string.Empty;
-
-                if (keyType.Name == "NameProperty")
-                {
-                    var valueName = archive.ReadName();
-                    if (valueName == null || valueName.Equals(AsaName.NameNone))
-                    {
-                        break; //end of set
-                    }
-                    valueKeyName = valueName.Name;
-                }
-                else
-                {
-                    //TODO:// unknown atm
-                    break;
-                }
-
-                var mapType = archive.ReadName(); //SetProperty
-                switch (mapType.Name)
-                {
-                    case "SetProperty":
-                        var mapValue = ReadSetProperty(archive);
-                        propertyValues.Add(new AsaProperty<dynamic>(valueKeyName, mapType.Name, 0, 0, mapValue));
-
-                        break;
-                    case "NameProperty":
-
-                        break;
-                    default:
-
-                        break;
-                }
-
-
-
-            }
-
-            return new AsaProperty<dynamic>(keyName, valueType.Name, 0, 0, propertyValues);
-        }
-
-        private static dynamic? ReadSetProperty(AsaArchive archive)
-        {
-            List<dynamic> values = new List<dynamic>();
-
-            //SetProperty
-            var setUnknownInt = archive.ReadInt(); //8
-            var shouldBeZero = archive.ReadInt(); //0
-            var setType = archive.ReadName(); //ObjectProperty
-            archive.SkipBytes(1);
-
-            var objectSkipCount = archive.ReadInt(); //0
-            var objectCount = archive.ReadInt(); //1
-
-            for (int x = 0; x < objectCount; x++)
-            {
-                values.Add(ReadPropertyValue(setType, archive));
-            }
-
-            return values;
-        }
-
-
-
-        private static AsaPropertyArray ReadArrayProperty(AsaName key, int position, AsaArchive archive, int dataSize)
-        {
-            var arrayType = archive.ReadName();
-            var endOfStruct = archive.ReadByte();
-            var arrayLength = archive.ReadInt();
-            var startOfArrayValuesPosition = archive.Position;
-
-            //struct
-            switch (arrayType.Name)
-            {
-                case "StructProperty":
-                    return ReadStructArray(archive, arrayType, arrayLength);
-
-                default:
-                    break;
-            }
-
-
-            //anything else
-
-            var expectedEndOfArrayPosition = startOfArrayValuesPosition + dataSize - 4;
-
-            List<dynamic> array = new List<dynamic>();
             try
             {
-                for (int i = 0; i < arrayLength; i++)
+                if (!archive.TryReadName(out var keyName) || keyName.Equals(AsaName.NameNone))
                 {
-                    array.Add(ReadPropertyValue(arrayType, archive));
+                    property = null;
+                    return false;
                 }
-                if (expectedEndOfArrayPosition != archive.Position)
+
+                if (!archive.TryReadName(out var valueTypeName))
                 {
-                    var skipBytes = expectedEndOfArrayPosition - archive.Position;
-                    archive.SkipBytes((int)skipBytes);
+                    property = null;
+                    return false;
+                }
+
+                var dataSize = archive.ReadInt32();
+                var position = archive.ReadInt32();
+                var startPosition = archive.Position;
+
+                switch (valueTypeName.Name)
+                {
+                    case "BoolProperty":
+                        if (TryReadPropertyValue(valueTypeName, archive, out var boolValue))
+                        {
+                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, boolValue);
+                            return true;
+                        }
+                        break;
+
+                    case "FloatProperty":
+                    case "IntProperty":
+                    case "Int8Property":
+                    case "DoubleProperty":
+                    case "UInt32Property":
+                    case "UInt64Property":
+                    case "UInt16Property":
+                    case "Int16Property":
+                    case "Int64Property":
+                    case "StrProperty":
+                    case "NameProperty":
+                    case "SoftObjectProperty":
+                    case "ObjectProperty":
+                        var unknownByte = archive.ReadByte();
+                        if (TryReadPropertyValue(valueTypeName, archive, out var simpleValue))
+                        {
+                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, unknownByte, simpleValue);
+                            return true;
+                        }
+                        break;
+
+                    case "StructProperty":
+                        if (archive.TryReadName(out var structType))
+                        {
+                            var structUnknownByte = archive.ReadByte();
+                            if (TryReadStructPropertyValue(archive, dataSize, structType, inArray, out var structValue))
+                            {
+                                property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, structUnknownByte, structValue);
+                                return true;
+                            }
+                        }
+                        else
+                        {
+                            archive.Position = startPosition;
+                            archive.SkipBytes(dataSize);
+                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, 0);
+                            return true;
+                        }
+                        break;
+
+                    case "ArrayProperty":
+                        if (TryReadArrayProperty(keyName, position, archive, dataSize, out var arrayProp))
+                        {
+                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, arrayProp.Value);
+                            return true;
+                        }
+                        break;
+
+                    case "MapProperty":
+                        try
+                        {
+                            if (TryReadMapProperty(archive, out var mapValue))
+                            {
+                                property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, mapValue);
+                                return true;
+                            }
+                        }
+                        catch
+                        {
+                            archive.Position = startPosition;
+                            archive.SkipBytes(dataSize);
+                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, 0);
+                            return true;
+                        }
+                        break;
+
+                    case "ByteProperty":
+                        if (archive.TryReadName(out var byteType))
+                        {
+                            if (byteType.Equals(AsaName.NameNone))
+                            {
+                                property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, archive.ReadByte(), archive.ReadByte());
+                            }
+                            else
+                            {
+                                if (archive.TryReadName(out var byteValue))
+                                {
+                                    property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, archive.ReadByte(), byteValue);
+                                }
+                                else
+                                {
+                                    property = null;
+                                    return false;
+                                }
+                            }
+                            return true;
+                        }
+                        break;
+                }
+
+                property = null;
+                return false;
+            }
+            catch
+            {
+                property = null;
+                return false;
+            }
+        }
+
+        private static bool TryReadPropertyValue(AsaName valueTypeName, AsaArchive archive, [NotNullWhen(true)] out dynamic? value)
+        {
+            try
+            {
+                switch (valueTypeName.Name)
+                {
+                    case "ByteProperty":
+                    case "Int8Property":
+                        value = archive.ReadByte();
+                        return true;
+                        
+                    case "DoubleProperty":
+                        value = archive.ReadDouble();
+                        return true;
+                        
+                    case "FloatProperty":
+                        value = archive.ReadSingle();
+                        return true;
+                        
+                    case "IntProperty":
+                        value = archive.ReadInt32();
+                        return true;
+                        
+                    case "ObjectProperty":
+                        if (AsaObjectReference.TryRead(archive, true, out var objRef))
+                        {
+                            value = objRef;
+                            return true;
+                        }
+                        value = null;
+                        return false;
+                        
+                    case "StrProperty":
+                        if (archive.TryReadString(out var strVal))
+                        {
+                            value = strVal;
+                            return true;
+                        }
+                        value = null;
+                        return false;
+                        
+                    case "NameProperty":
+                        if (archive.TryReadName(out var name))
+                        {
+                            value = name.ToString();
+                            return true;
+                        }
+                        value = null;
+                        return false;
+                        
+                    case "UInt32Property":
+                        value = (uint)archive.ReadInt32();
+                        return true;
+                        
+                    case "UInt64Property":
+                        value = (ulong)archive.ReadInt64();
+                        return true;
+                        
+                    case "UInt16Property":
+                        value = (ushort)archive.ReadInt16();
+                        return true;
+                        
+                    case "Int16Property":
+                        value = archive.ReadInt16();
+                        return true;
+                        
+                    case "Int64Property":
+                        value = archive.ReadInt64();
+                        return true;
+                        
+                    case "BoolProperty":
+                        value = archive.ReadInt16() == 1;
+                        return true;
+                        
+                    case "SoftObjectProperty":
+                        return TryReadSoftObjectPropertyValue(archive, out value);
+                        
+                    default:
+                        value = null;
+                        return false;
                 }
             }
-            catch (Exception e)
+            catch
             {
-                archive.Position = startOfArrayValuesPosition;
-                String content = Convert.ToHexString(archive.ReadBytes(dataSize - 4));
-                array.Add(content);
+                value = null;
+                return false;
             }
-
-            return new AsaPropertyArray(key.Name, (dynamic)array);
-
         }
 
-        private static AsaPropertyArray ReadStructArray(AsaArchive archive, AsaName arrayType, int arrayLength)
+        private static bool TryReadSoftObjectPropertyValue(AsaArchive archive, [NotNullWhen(true)] out dynamic? value)
         {
-            List<dynamic> structArray = new List<dynamic>();
-
-            var name = archive.ReadName();
-            var type = archive.ReadName();
-            var dataSize = archive.ReadInt();
-            var position = archive.ReadInt();
-            var structType = archive.ReadName();
-            var unknownByte = archive.ReadByte();
-
-            archive.SkipBytes(16);
-            for (int i = 0; i < arrayLength; i++)
+            if (archive.TryReadName(out var objectName) && archive.TryReadName(out var objectValue))
             {
-                var structProperties = ReadStructPropertyValue(archive, dataSize, type, true);
-
-                structArray.Add(structProperties);
+                value = new AsaProperty<dynamic>(objectName.ToString(), "Propertiestr", 0, 0, objectValue);
+                return true;
             }
-
-            return new AsaPropertyArray(name.Name, (dynamic)structArray);
+            
+            value = null;
+            return false;
         }
 
-        private static dynamic ReadPropertyValue(AsaName valueTypeName, AsaArchive archive)
-        {
-            switch (valueTypeName.Name)
-            {
-                case "ByteProperty":
-                case "Int8Property":
-                    return archive.ReadByte();
-                case "DoubleProperty":
-                    return archive.ReadDouble();
-                case "FloatProperty":
-                    return archive.ReadFloat();
-                case "IntProperty":
-                    return archive.ReadInt();
-                case "ObjectProperty":
-                    return ReadObjectPropertyValue(archive);
-                case "StrProperty":
-                    return archive.ReadString();
-                case "NameProperty":
-                    return archive.ReadName().ToString();
-                case "UInt32Property":
-                    return (uint)archive.ReadInt();
-                case "UInt64Property":
-                    return (ulong)archive.ReadLong();
-                case "UInt16Property":
-                    return (UInt16)archive.ReadShort();
-                case "Int16Property":
-                    return archive.ReadShort();
-                case "Int64Property":
-                    return archive.ReadLong();
-                case "BoolProperty":
-                    return archive.ReadShort() == 1;
-                case "StructProperty":
-                    return ReadStructPropertyValue(archive, archive.ReadInt(), true);
-                case "SoftObjectProperty":
-                    return ReadSoftObjectPropertyValue(archive);
-                default:
-                    return null;
-            }
-
-        }
-
-        private static object ReadSoftObjectPropertyValue(AsaArchive archive)
-        {
-            var objectName = archive.ReadName();
-            var objectValue = archive.ReadName();
-
-            return new AsaProperty<dynamic>(objectName?.ToString(), "PropertyStr", 0, 0, objectValue);
-        }
-
-
-        private static object ReadStructPropertyValue(AsaArchive archive, int dataSize, bool inArray)
-        {
-            return ReadStructPropertyValue(archive, dataSize, archive.ReadName(), inArray);
-
-        }
-
-        private static dynamic ReadStructPropertyValue(AsaArchive archive, int dataSize, AsaName structType, bool inArray)
+        private static bool TryReadStructPropertyValue(AsaArchive archive, int dataSize, AsaName structType, bool inArray, [NotNullWhen(true)] out dynamic? value)
         {
             if (!inArray)
             {
                 archive.SkipBytes(16);
             }
 
-
-            switch (structType.Name)
-            {
-                case "LinearColor":
-                    return new AsaLinearColor(archive);
-                case "Quat":
-                    return new AsaQuat(archive);
-
-                case "Vector":
-                    return new AsaVector(archive);
-
-                case "Rotator":
-                    return new AsaRotator(archive);
-
-                case "UniqueNetIdRepl":
-                    return new AsaUniqueNetIdRepl(archive);
-                case "Color":
-                    return new AsaColor(archive);
-
-                default:
-
-                    break;
-            }
-
-            //not a known/special struct, read in property value(s)
-            var position = archive.Position;
-            List<object> properties = new List<object>();
             try
             {
-                properties = ReadStructProperties(archive);
-                if ((archive.Position != position + dataSize) && !inArray)
+                switch (structType.Name)
                 {
-                    throw new Exception("");
+                    case "LinearColor":
+                        value = new AsaLinearColor(archive);
+                        return true;
+                        
+                    case "Quat":
+                        value = new AsaQuat(archive);
+                        return true;
+                        
+                    case "Vector":
+                        value = new AsaVector(archive);
+                        return true;
+                        
+                    case "Rotator":
+                        value = new AsaRotator(archive);
+                        return true;
+                        
+                    case "UniqueNetIdRepl":
+                        if (AsaUniqueNetIdRepl.TryRead(archive, out var netId))
+                        {
+                            value = netId;
+                            return true;
+                        }
+                        value = null;
+                        return false;
+                        
+                    case "Color":
+                        value = new AsaColor(archive);
+                        return true;
+                        
+                    default:
+                        // Not a known struct, read properties
+                        var position = archive.Position;
+                        var properties = new List<object>();
+                        
+                        while (TryReadProperty(archive, out var prop))
+                        {
+                            properties.Add(prop);
+                        }
+
+                        if (!inArray && archive.Position != position + dataSize)
+                        {
+                            // Size mismatch, might be an error
+                        }
+
+                        value = properties;
+                        return true;
+                }
+            }
+            catch
+            {
+                value = null;
+                return false;
+            }
+        }
+
+        private static bool TryReadArrayProperty(AsaName key, int position, AsaArchive archive, int dataSize, [NotNullWhen(true)] out AsaPropertyArray? result)
+        {
+            try
+            {
+                if (!archive.TryReadName(out var arrayType))
+                {
+                    result = null;
+                    return false;
                 }
 
+                var endOfStruct = archive.ReadByte();
+                var arrayLength = archive.ReadInt32();
+                var startOfArrayValuesPosition = archive.Position;
+
+                if (arrayType.Name == "StructProperty")
+                {
+                    return TryReadStructArray(archive, arrayType, arrayLength, out result);
+                }
+
+                // Read simple array
+                var expectedEndOfArrayPosition = startOfArrayValuesPosition + dataSize - 4;
+                var array = new List<dynamic>();
+
+                try
+                {
+                    for (int i = 0; i < arrayLength; i++)
+                    {
+                        if (TryReadPropertyValue(arrayType, archive, out var item))
+                        {
+                            array.Add(item);
+                        }
+                        else
+                        {
+                            // Failed to read item
+                            break;
+                        }
+                    }
+
+                    if (expectedEndOfArrayPosition != archive.Position)
+                    {
+                        var skipBytes = expectedEndOfArrayPosition - archive.Position;
+                        archive.SkipBytes((int)skipBytes);
+                    }
+                }
+                catch (Exception)
+                {
+                    archive.Position = startOfArrayValuesPosition;
+                    string content = Convert.ToHexString(archive.ReadBytes(dataSize - 4));
+                    array.Add(content);
+                }
+
+                result = new AsaPropertyArray(key.Name, array);
+                return true;
             }
-            catch (Exception ex)
+            catch
             {
-
-
-
+                result = null;
+                return false;
             }
-
-            return properties;
-
         }
 
-        private static List<object> ReadStructProperties(AsaArchive archive)
+        private static bool TryReadStructArray(AsaArchive archive, AsaName arrayType, int arrayLength, [NotNullWhen(true)] out AsaPropertyArray? result)
         {
-
-            List<object> properties = new List<object>();
-            var structProperty = ReadProperty(archive);
-            while (structProperty != null)
+            try
             {
-                properties.Add(structProperty);
-                structProperty = ReadProperty(archive);
-            }
+                var structArray = new List<dynamic>();
 
-            return properties;
+                if (!archive.TryReadName(out var name) || !archive.TryReadName(out var type))
+                {
+                    result = null;
+                    return false;
+                }
+
+                var dataSize = archive.ReadInt32();
+                var position = archive.ReadInt32();
+                
+                if (!archive.TryReadName(out var structType))
+                {
+                    result = null;
+                    return false;
+                }
+
+                var unknownByte = archive.ReadByte();
+                archive.SkipBytes(16);
+
+                for (int i = 0; i < arrayLength; i++)
+                {
+                    if (TryReadStructPropertyValue(archive, dataSize, type, true, out var structProperties))
+                    {
+                        structArray.Add(structProperties);
+                    }
+                    else
+                    {
+                        result = null;
+                        return false;
+                    }
+                }
+
+                result = new AsaPropertyArray(name.Name, structArray);
+                return true;
+            }
+            catch
+            {
+                result = null;
+                return false;
+            }
         }
 
-        private static object ReadObjectPropertyValue(AsaArchive archive)
+        private static bool TryReadMapProperty(AsaArchive archive, [NotNullWhen(true)] out dynamic? value)
         {
-            return new AsaObjectReference(archive, true);
+            try
+            {
+                if (!archive.TryReadName(out var keyType) || !archive.TryReadName(out var valueType))
+                {
+                    value = null;
+                    return false;
+                }
+
+                var byteUnknown = archive.ReadByte();
+                var skipCount = archive.ReadInt32();
+                var mapCount = archive.ReadInt32();
+
+                var property = new List<AsaProperty<dynamic>>();
+
+                for (int mapIndex = 0; mapIndex < mapCount; mapIndex++)
+                {
+                    switch (keyType.Name)
+                    {
+                        case "NameProperty":
+                            if (TryReadStructMap(archive, keyType, valueType, out var structMapProp))
+                            {
+                                property.Add(structMapProp);
+                            }
+                            else
+                            {
+                                value = null;
+                                return false;
+                            }
+                            break;
+
+                        case "ObjectProperty":
+                            if (AsaObjectReference.TryRead(archive, true, out var mapObjectRef))
+                            {
+                                archive.SkipBytes(1);
+                            }
+                            else
+                            {
+                                value = null;
+                                return false;
+                            }
+                            break;
+
+                        default:
+                            if (!archive.TryReadName(out var propertyName))
+                            {
+                                value = null;
+                                return false;
+                            }
+
+                            var unknown0 = archive.ReadInt32(); // 0
+                            var propertyValues = new List<AsaProperty<dynamic>>();
+
+                            while (true)
+                            {
+                                if (!archive.TryReadName(out var subKeyName) || subKeyName.Equals(AsaName.NameNone))
+                                {
+                                    break;
+                                }
+
+                                if (!archive.TryReadName(out var dataType))
+                                {
+                                    break;
+                                }
+
+                                var unknown1 = archive.ReadInt32();
+                                var unknown2 = archive.ReadInt32();
+                                archive.SkipBytes(1);
+
+                                if (TryReadPropertyValue(dataType, archive, out var keyValue))
+                                {
+                                    propertyValues.Add(new AsaProperty<dynamic>(subKeyName.Name, dataType.Name, 0, 0, keyValue));
+                                }
+                            }
+
+                            if (propertyValues.Count > 0)
+                            {
+                                property.Add(new AsaProperty<dynamic>(propertyName.Name, "PropertyList", 0, 0, propertyValues));
+                            }
+                            break;
+                    }
+                }
+
+                value = property;
+                return true;
+            }
+            catch
+            {
+                value = null;
+                return false;
+            }
+        }
+
+        private static bool TryReadStructMap(AsaArchive archive, AsaName keyType, AsaName valueType, [NotNullWhen(true)] out AsaProperty<dynamic>? result)
+        {
+            try
+            {
+                var propertyValues = new List<AsaProperty<dynamic>>();
+
+                if (!TryReadPropertyValue(keyType, archive, out var keyName))
+                {
+                    result = null;
+                    return false;
+                }
+
+                while (true)
+                {
+                    string? valueKeyName = null;
+
+                    if (keyType.Name == "NameProperty")
+                    {
+                        if (!archive.TryReadName(out var valueName) || valueName.Equals(AsaName.NameNone))
+                        {
+                            break;
+                        }
+                        valueKeyName = valueName.Name;
+                    }
+                    else
+                    {
+                        break;
+                    }
+
+                    if (!archive.TryReadName(out var mapType))
+                    {
+                        break;
+                    }
+
+                    switch (mapType.Name)
+                    {
+                        case "SetProperty":
+                            if (TryReadSetProperty(archive, out var mapValue))
+                            {
+                                propertyValues.Add(new AsaProperty<dynamic>(valueKeyName, mapType.Name, 0, 0, mapValue));
+                            }
+                            break;
+                    }
+                }
+
+                result = new AsaProperty<dynamic>(keyName, valueType.Name, 0, 0, propertyValues);
+                return true;
+            }
+            catch
+            {
+                result = null;
+                return false;
+            }
+        }
+
+        private static bool TryReadSetProperty(AsaArchive archive, [NotNullWhen(true)] out dynamic? value)
+        {
+            try
+            {
+                var values = new List<dynamic>();
+
+                var setUnknownInt = archive.ReadInt32();
+                var shouldBeZero = archive.ReadInt32();
+                
+                if (!archive.TryReadName(out var setType))
+                {
+                    value = null;
+                    return false;
+                }
+
+                archive.SkipBytes(1);
+
+                var objectSkipCount = archive.ReadInt32();
+                var objectCount = archive.ReadInt32();
+
+                for (int x = 0; x < objectCount; x++)
+                {
+                    if (TryReadPropertyValue(setType, archive, out var item))
+                    {
+                        values.Add(item);
+                    }
+                    else
+                    {
+                        value = null;
+                        return false;
+                    }
+                }
+
+                value = values;
+                return true;
+            }
+            catch
+            {
+                value = null;
+                return false;
+            }
         }
     }
 }

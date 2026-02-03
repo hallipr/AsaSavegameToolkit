@@ -3,7 +3,11 @@
     <Project Path="AsaSavCli/src/AsaSavCli.csproj" />
   </Folder>
   <Folder Name="/AsaSavegameToolkit/">
+    <Project Path="AsaSavegameToolkit/old/AsaSavegameToolkitOld.csproj" />
     <Project Path="AsaSavegameToolkit/src/AsaSavegameToolkit.csproj" />
     <Project Path="AsaSavegameToolkit/tests/AsaSavegameToolkit.Tests/AsaSavegameToolkit.Tests.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
   </Folder>
 </Solution>

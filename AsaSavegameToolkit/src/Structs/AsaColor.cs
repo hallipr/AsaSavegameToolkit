@@ -1,25 +1,27 @@
-﻿namespace AsaSavegameToolkit.Structs
+namespace AsaSavegameToolkit.Structs
 {
-    public class AsaColor
+    public readonly struct AsaColor
     {
-        private readonly byte r;
-        private readonly byte g;
-        private readonly byte b;
-        private readonly byte a;
-
-        public byte R => r;
-        public byte G => g;
-        public byte B => b;
-        public byte A => a;
-
+        public byte R { get; init; }
+        public byte G { get; init; }
+        public byte B { get; init; }
+        public byte A { get; init; }
 
         public AsaColor(AsaArchive archive)
         {
-            r = archive.ReadByte();
-            g = archive.ReadByte();
-            b = archive.ReadByte();
-            a = archive.ReadByte();
+            ArgumentNullException.ThrowIfNull(archive);
+            R = archive.ReadByte();
+            G = archive.ReadByte();
+            B = archive.ReadByte();
+            A = archive.ReadByte();
         }
 
+        public AsaColor(byte r, byte g, byte b, byte a)
+        {
+            R = r;
+            G = g;
+            B = b;
+            A = a;
+        }
     }
 }

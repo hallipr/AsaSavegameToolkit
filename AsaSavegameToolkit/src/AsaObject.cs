@@ -1,106 +1,114 @@
-﻿using AsaSavegameToolkit.Extensions;
-using AsaSavegameToolkit.Propertys;
+using AsaSavegameToolkit.Extensions;
+using AsaSavegameToolkit.Properties;
 using AsaSavegameToolkit.Structs;
+using System.Diagnostics.CodeAnalysis;
 
 namespace AsaSavegameToolkit
 {
     public class AsaObject
     {
-        public Guid Uuid { get; private set; } = Guid.Empty;
-        public string ClassName { get; private set; } = string.Empty;
-        public bool IsItem { get; private set; } = false;
-        public List<string> Names { get; private set; } = new List<string>();
-        public AsaLocation? Location { get; private set; }
+        public Guid Uuid { get; init; }
+        public string ClassName { get; init; }
+        public bool IsItem { get; init; }
+        public List<string> Names { get; init; }
+        public AsaLocation? Location { get; init; }
+        public List<AsaProperty<dynamic>> Properties { get; private set; }
+        private int _propertiesOffset;
 
-        public List<AsaProperty<dynamic>> Properties { get; private set; } = new List<AsaProperty<dynamic>>();
-
-        private int propertiesOffset = 0;
-
-
-        public AsaObject(AsaArchive archive)
+        private AsaObject()
         {
-            Uuid = GuidExtensions.ToGuid(archive.ReadBytes(16));
-            ClassName = archive.ReadString();
-            IsItem = archive.ReadBool();
-
-            var nameCount = archive.ReadInt();
-            while (nameCount-- > 0)
-            {
-                var name = archive.ReadString();
-                Names.Add(name);
-            }
-
-            var fromDataFile = archive.ReadBool();
-            var dataFileIndex = archive.ReadInt();
-            var hasLocation = archive.ReadBool();
-            if (hasLocation)
-            {
-                AsaVector vector = new AsaVector(archive);
-                AsaRotator rotator = new AsaRotator(archive);
-
-                Location = new AsaLocation(vector.X, vector.Y, vector.X, rotator.Pitch, rotator.Yaw, rotator.Roll);
-            }
-            propertiesOffset = archive.ReadInt();
-            var shouldBeZero = archive.ReadInt();
+            Uuid = Guid.Empty;
+            ClassName = string.Empty;
+            IsItem = false;
+            Names = [];
+            Properties = [];
+            _propertiesOffset = 0;
         }
 
-        public AsaObject(AsaArchive archive, int propertyOffset)
+        public static bool TryRead(AsaArchive archive, [NotNullWhen(true)] out AsaObject? result)
         {
-            Uuid = GuidExtensions.ToGuid(archive.ReadBytes(16));
-            ClassName = archive.ReadString();
-            IsItem = archive.ReadBool();
-
-            var nameCount = archive.ReadInt();
-            while (nameCount-- > 0)
-            {
-                var name = archive.ReadString();
-                Names.Add(name);
-            }
-
-            var fromDataFile = archive.ReadBool();
-            var dataFileIndex = archive.ReadInt();
-            var hasLocation = archive.ReadBool();
-            if (hasLocation)
-            {
-                AsaVector vector = new AsaVector(archive);
-                AsaRotator rotator = new AsaRotator(archive);
-
-                Location = new AsaLocation(vector.X, vector.Y, vector.X, rotator.Pitch, rotator.Yaw, rotator.Roll);
-            }
-            propertiesOffset = archive.ReadInt();
-            var shouldBeZero = archive.ReadInt();
-        }
-
-        public void ReadProperties(AsaArchive archive)
-        {
-            ReadProperties(archive, true);
-        }
-
-        public void ReadProperties(AsaArchive archive, bool usePropertiesOffset)
-        {
-            Properties.Clear();
-
-            if (usePropertiesOffset)
-            {
-                archive.Position = propertiesOffset;
-            }
+            ArgumentNullException.ThrowIfNull(archive);
 
             try
             {
-                var property = AsaPropertyRegistry.ReadProperty(archive);
-                while (property != null)
+                Guid uuid = archive.ReadBytes(16).ToGuid();
+                
+                if (!archive.TryReadString(out var className))
                 {
-                    Properties.Add(property);
-                    property = AsaPropertyRegistry.ReadProperty(archive);
+                    result = null;
+                    return false;
                 }
 
+                bool isItem = archive.ReadBool();
+                int nameCount = archive.ReadInt32();
+                var names = new List<string>();
+
+                while (nameCount-- > 0)
+                {
+                    if (archive.TryReadString(out var name))
+                    {
+                        names.Add(name);
+                    }
+                }
+
+                _ = archive.ReadBool(); // fromDataFile
+                _ = archive.ReadInt32(); // dataFileIndex
+
+                AsaLocation? location = null;
+                bool hasLocation = archive.ReadBool();
+                if (hasLocation)
+                {
+                    var vector = new AsaVector(archive);
+                    var rotator = new AsaRotator(archive);
+                    location = new AsaLocation(vector.X, vector.Y, vector.Z, rotator.Pitch, rotator.Yaw, rotator.Roll);
+                }
+
+                int propertiesOffset = archive.ReadInt32();
+                _ = archive.ReadInt32(); // shouldBeZero
+
+                result = new AsaObject
+                {
+                    Uuid = uuid,
+                    ClassName = className,
+                    IsItem = isItem,
+                    Names = names,
+                    Location = location,
+                    _propertiesOffset = propertiesOffset
+                };
+
+                return true;
             }
             catch
             {
-
+                result = null;
+                return false;
             }
         }
 
+        public bool TryReadProperties(AsaArchive archive, bool usePropertiesOffset = true)
+        {
+            ArgumentNullException.ThrowIfNull(archive);
 
+            try
+            {
+                Properties.Clear();
+
+                if (usePropertiesOffset)
+                {
+                    archive.Position = _propertiesOffset;
+                }
+
+                while (AsaPropertyRegistry.TryReadProperty(archive, out var property))
+                {
+                    Properties.Add(property);
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 }

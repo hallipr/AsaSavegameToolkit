@@ -1,121 +1,138 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Diagnostics.CodeAnalysis;
 
 namespace AsaSavegameToolkit
 {
-    internal class AsaTribeStore
+    public class AsaTribeStore
     {
-        readonly int headerOffsetAdjustment = 4;
-        readonly int tribeHeaderBaseOffset = 12;
+        public List<AsaTribe> Tribes { get; init; } = [];
+        public List<AsaProfile> Profiles { get; init; } = [];
 
-        List<Tuple<long, long, long>> tribeDataPointers = new List<Tuple<long, long, long>>(); //tribeId, offset, size
-        List<Tuple<long, long, long>> profileDataPointers = new List<Tuple<long, long, long>>(); //eosId, offset, size
-
-
-        public List<AsaTribe> Tribes { get; internal set; } = new List<AsaTribe>();
-        public List<AsaProfile> Profiles { get; internal set; } = new List<AsaProfile>();
-
-        public AsaTribeStore(AsaArchive archive)
+        public static bool TryRead(AsaArchive archive, [NotNullWhen(true)] out AsaTribeStore? result)
         {
-            bool someBool = archive.ReadBool();
+            ArgumentNullException.ThrowIfNull(archive);
 
-            //headers (pointers)
-            readTribeHeaders(archive);
-            readProfileHeaders(archive);
-
-            readTribes(archive);
-            readProfiles(archive);
-
-        }
-
-        private void readTribes(AsaArchive archive)
-        {
-
-            foreach (var tribePointer in tribeDataPointers)
+            try
             {
-                try
+                _ = archive.ReadBool(); // someBool
+
+                var tribes = new List<AsaTribe>();
+                var profiles = new List<AsaProfile>();
+
+                // Read tribe headers
+                if (TryReadTribeHeaders(archive, out var tribePointers))
                 {
-                    archive.Position = tribePointer.Item2;
-                    AsaTribe tribeObject = new AsaTribe();
-                    tribeObject.Read(archive, false);
-
-
-                    Tribes.Add(tribeObject);
-
-                }
-                catch
-                {
-
-                }
-            }
-
-        }
-
-        private void readProfiles(AsaArchive archive)
-        {
-            foreach (var profilePointer in profileDataPointers)
-            {
-                try
-                {
-
-                    archive.Position = profilePointer.Item2;
-                    AsaProfile profileObject = new AsaProfile();
-                    profileObject.Read(archive);
-
-                    if (!Profiles.Any(p => p.Profile.Uuid.Equals(profileObject.Profile.Uuid)))
+                    // Read profile headers
+                    if (TryReadProfileHeaders(archive, out var profilePointers))
                     {
+                        // Read tribes
+                        foreach (var (tribeId, offset, size) in tribePointers)
+                        {
+                            archive.Position = offset;
+                            if (AsaTribe.TryRead(archive, false, out var tribe))
+                            {
+                                tribes.Add(tribe);
+                            }
+                        }
 
-                        Profiles.Add(profileObject);
+                        // Read profiles
+                        foreach (var (eosId, offset, size) in profilePointers)
+                        {
+                            archive.Position = offset;
+                            if (AsaProfile.TryRead(archive, out var profile) && 
+                                !profiles.Any(p => p.Profile?.Uuid == profile.Profile?.Uuid))
+                            {
+                                profiles.Add(profile);
+                            }
+                        }
+
+                        result = new AsaTribeStore { Tribes = tribes, Profiles = profiles };
+                        return true;
                     }
-
                 }
-                catch
+
+                result = null;
+                return false;
+            }
+            catch
+            {
+                result = null;
+                return false;
+            }
+        }
+
+        private static bool TryReadTribeHeaders(AsaArchive archive, [NotNullWhen(true)] out List<(long, long, long)>? tribePointers)
+        {
+            try
+            {
+                tribePointers = [];
+
+                const int TribeHeaderBaseOffset = 12;
+
+                int tribeHeaderStart = archive.ReadInt32() + TribeHeaderBaseOffset;
+                int tribeCount = archive.ReadInt32();
+
+                if (tribeCount == 0)
                 {
-
+                    return true;
                 }
+
+                long tribeDataStart = archive.Position;
+                archive.Position = tribeHeaderStart;
+
+                for (int i = 0; i < tribeCount; i++)
+                {
+                    uint tribeId = archive.ReadUInt32();
+                    _ = archive.ReadInt32(); // something
+                    long offset = archive.ReadInt32() + tribeDataStart;
+                    int size = archive.ReadInt32();
+
+                    tribePointers.Add((tribeId, offset, size));
+                }
+
+                return true;
             }
-        }
-
-        private void readProfileHeaders(AsaArchive archive)
-        {
-            long playerHeaderStart = archive.ReadInt() + archive.Position + headerOffsetAdjustment;
-            int playerCount = archive.ReadInt();
-            if (playerCount == 0) return;
-
-            long playerDataStart = archive.Position;
-            archive.Position = playerHeaderStart;
-            for (int i = 0; i < playerCount; i++)
+            catch
             {
-                long eosId = archive.ReadLong();
-                long offset = archive.ReadInt() + playerDataStart;
-                int size = archive.ReadInt();
-                profileDataPointers.Add(new Tuple<long, long, long>(eosId, offset, size));
+                tribePointers = null;
+                return false;
             }
         }
 
-        private void readTribeHeaders(AsaArchive archive)
+        private static bool TryReadProfileHeaders(AsaArchive archive, [NotNullWhen(true)] out List<(long, long, long)>? profilePointers)
         {
-            int tribeHeaderStart = archive.ReadInt() + tribeHeaderBaseOffset;
-            int tribeCount = archive.ReadInt();
-            if (tribeCount == 0) return;
-
-            long tribeDataStart = archive.Position;
-
-            archive.Position = tribeHeaderStart;
-            for (int i = 0; i < tribeCount; i++)
+            const int HeaderOffsetAdjustment = 4;
+            
+            try
             {
-                var tribeId = archive.ReadUInt();
-                int something = archive.ReadInt();
-                long offset = archive.ReadInt() + tribeDataStart;
-                int size = archive.ReadInt();
+                profilePointers = [];
 
-                tribeDataPointers.Add(new Tuple<long, long, long>(tribeId, offset, size));
+                long playerHeaderStart = archive.ReadInt32() + archive.Position + HeaderOffsetAdjustment;
+                int playerCount = archive.ReadInt32();
+
+                if (playerCount == 0)
+                {
+                    return true;
+                }
+
+                long playerDataStart = archive.Position;
+                archive.Position = playerHeaderStart;
+
+                for (int i = 0; i < playerCount; i++)
+                {
+                    long eosId = archive.ReadInt64();
+                    long offset = archive.ReadInt32() + playerDataStart;
+                    int size = archive.ReadInt32();
+
+                    profilePointers.Add((eosId, offset, size));
+                }
+
+                return true;
             }
-
+            catch
+            {
+                profilePointers = null;
+                return false;
+            }
         }
-
     }
 }

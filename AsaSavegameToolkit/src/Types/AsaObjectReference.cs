@@ -1,83 +1,108 @@
-﻿using AsaSavegameToolkit.Extensions;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using AsaSavegameToolkit.Extensions;
+using System.Diagnostics.CodeAnalysis;
 
 namespace AsaSavegameToolkit.Types
 {
     public class AsaObjectReference
     {
-        int TYPE_ID = 0;
-        int TYPE_PATH = 1;
-        int TYPE_PATH_NO_TYPE = 2;
-        int TYPE_NAME = 3;
-        int TYPE_UUID = 4;
-        int TYPE_UNKNOWN = -1;
+        private const int TypeId = 0;
+        private const int TypePath = 1;
+        private const int TypePathNoType = 2;
+        private const int TypeName = 3;
+        private const int TypeUuid = 4;
+        private const int TypeUnknown = -1;
 
-        private readonly int type;
-        private readonly object value;
+        private readonly int _type;
+        private readonly object _value;
 
-        public string Value => value.ToString();
+        public string Value => _value.ToString() ?? string.Empty;
 
         public AsaObjectReference(string objectValue)
         {
-            value = objectValue;
-        }
-
-        public AsaObjectReference(AsaArchive archive, bool useNameTable)
-        {
-            if (useNameTable && archive.NameTable.Count > 0)
-            {
-                bool isName = archive.ReadShort() == 1;
-                if (isName)
-                {
-                    type = TYPE_PATH;
-                    value = archive.ReadName().ToString();
-                }
-                else
-                {
-                    type = TYPE_UUID;
-                    value = GuidExtensions.ToGuid(archive.ReadBytes(16));
-                }
-                return;
-
-            }
-
-            int objectType = archive.ReadInt();
-
-
-            if (objectType == -1)
-            {
-                type = TYPE_UNKNOWN;
-                value = string.Empty;
-
-            }
-            else if (objectType == 0)
-            {
-                type = TYPE_ID;
-                value = archive.ReadInt();
-            }
-            else if (objectType == 1)
-            {
-                type = TYPE_PATH;
-                value = archive.ReadString();
-            }
-            else
-            {
-                archive.SkipBytes(-4);
-                type = TYPE_PATH_NO_TYPE;
-                value = archive.ReadString();
-            }
-
-
+            ArgumentNullException.ThrowIfNull(objectValue);
+            _type = TypePath;
+            _value = objectValue;
         }
 
         public AsaObjectReference(Guid guid)
         {
-            type = TYPE_UUID;
-            value = guid.ToString();
+            _type = TypeUuid;
+            _value = guid.ToString();
+        }
+
+        private AsaObjectReference(int type, object value)
+        {
+            _type = type;
+            _value = value;
+        }
+
+        public static bool TryRead(AsaArchive archive, bool useNameTable, [NotNullWhen(true)] out AsaObjectReference? result)
+        {
+            ArgumentNullException.ThrowIfNull(archive);
+
+            try
+            {
+                if (useNameTable && archive.NameTable.Count > 0)
+                {
+                    bool isName = archive.ReadInt16() == 1;
+                    if (isName)
+                    {
+                        if (archive.TryReadName(out var name))
+                        {
+                            result = new AsaObjectReference(TypePath, name.ToString());
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        var guid = GuidExtensions.ToGuid(archive.ReadBytes(16));
+                        result = new AsaObjectReference(TypeUuid, guid);
+                        return true;
+                    }
+
+                    result = null;
+                    return false;
+                }
+
+                int objectType = archive.ReadInt32();
+
+                if (objectType == -1)
+                {
+                    result = new AsaObjectReference(TypeUnknown, string.Empty);
+                    return true;
+                }
+                else if (objectType == 0)
+                {
+                    int id = archive.ReadInt32();
+                    result = new AsaObjectReference(TypeId, id);
+                    return true;
+                }
+                else if (objectType == 1)
+                {
+                    if (archive.TryReadString(out var path))
+                    {
+                        result = new AsaObjectReference(TypePath, path);
+                        return true;
+                    }
+                }
+                else
+                {
+                    archive.SkipBytes(-4);
+                    if (archive.TryReadString(out var path))
+                    {
+                        result = new AsaObjectReference(TypePathNoType, path);
+                        return true;
+                    }
+                }
+
+                result = null;
+                return false;
+            }
+            catch
+            {
+                result = null;
+                return false;
+            }
         }
     }
 }

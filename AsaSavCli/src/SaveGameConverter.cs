@@ -20,7 +20,10 @@ public class SaveGameConverter
     public async Task<string> ConvertAsync()
     {
         var savegame = new AsaSavegame();
-        savegame.Read(_saveFile.FullName, Environment.ProcessorCount);
+        if (!savegame.TryRead(_saveFile.FullName, Environment.ProcessorCount))
+        {
+            throw new InvalidOperationException("Failed to read savegame file");
+        }
 
         var options = new JsonSerializerOptions
         {

@@ -1,73 +1,80 @@
-﻿using AsaSavegameToolkit.Propertys;
+using AsaSavegameToolkit.Properties;
+using System.Diagnostics.CodeAnalysis;
 
 namespace AsaSavegameToolkit
 {
     public class AsaProfile
     {
-        public List<AsaObject> Objects { get; private set; } = new List<AsaObject>();
-        public List<AsaProperty<dynamic>> Properties => Profile?.Properties ?? new List<AsaProperty<dynamic>>();
-        public AsaObject? Profile
+        public List<AsaObject> Objects { get; init; }
+        public List<AsaProperty<dynamic>> Properties => Profile?.Properties ?? [];
+        
+        public AsaObject? Profile => Objects.FirstOrDefault(o => 
+            o.ClassName?.EndsWith("PrimalPlayerDataBP_C", StringComparison.OrdinalIgnoreCase) ?? false);
+
+        private AsaProfile()
         {
-            get
-            {
-                return Objects.FirstOrDefault(o => o.ClassName.EndsWith("PrimalPlayerDataBP_C"));
-            }
+            Objects = [];
         }
 
-
-        public void Read(AsaArchive archive)
+        public static bool TryRead(AsaArchive archive, [NotNullWhen(true)] out AsaProfile? result)
         {
-            var profileVersion = archive.ReadInt();
-            var profilesCount = archive.ReadInt();
-            if (profilesCount == 0)
+            ArgumentNullException.ThrowIfNull(archive);
+
+            try
             {
-                return;
-            }
+                _ = archive.ReadInt32(); // profileVersion
+                int profilesCount = archive.ReadInt32();
 
-            Objects.Clear();
-
-            while (profilesCount-- > 0)
-            {
-                var aObject = new AsaObject(archive);
-                Objects.Add(aObject);
-            }
-
-            foreach (var aObject in Objects)
-            {
-                aObject.ReadProperties(archive, false);
-            }
-
-        }
-
-        public void Read(string filename)
-        {
-            using (var ms = new MemoryStream(File.ReadAllBytes(filename)))
-            {
-                using (AsaArchive archive = new AsaArchive(ms))
+                if (profilesCount == 0)
                 {
-                    var profileVersion = archive.ReadInt();
-                    var profilesCount = archive.ReadInt();
-                    if (profilesCount == 0)
-                    {
-                        return;
-                    }
+                    result = null;
+                    return false;
+                }
 
-                    Objects.Clear();
+                var objects = new List<AsaObject>();
 
-                    while (profilesCount-- > 0)
+                while (profilesCount-- > 0)
+                {
+                    if (AsaObject.TryRead(archive, out var obj))
                     {
-                        var aObject = new AsaObject(archive);
-                        Objects.Add(aObject);
-                    }
-
-                    foreach (var aObject in Objects)
-                    {
-                        aObject.ReadProperties(archive);
+                        objects.Add(obj);
                     }
                 }
-                ms.Close();
+
+                foreach (var obj in objects)
+                {
+                    obj.TryReadProperties(archive, false);
+                }
+
+                result = new AsaProfile { Objects = objects };
+                return true;
+            }
+            catch
+            {
+                result = null;
+                return false;
             }
         }
 
+        public static bool TryReadFromFile(string filename, [NotNullWhen(true)] out AsaProfile? result)
+        {
+            if (!File.Exists(filename))
+            {
+                result = null;
+                return false;
+            }
+
+            try
+            {
+                using var ms = new MemoryStream(File.ReadAllBytes(filename));
+                using var archive = new AsaArchive(ms);
+                return TryRead(archive, out result);
+            }
+            catch
+            {
+                result = null;
+                return false;
+            }
+        }
     }
 }

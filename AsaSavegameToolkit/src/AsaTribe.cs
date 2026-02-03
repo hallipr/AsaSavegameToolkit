@@ -1,75 +1,81 @@
-﻿using AsaSavegameToolkit.Propertys;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using AsaSavegameToolkit.Properties;
+using System.Diagnostics.CodeAnalysis;
 
 namespace AsaSavegameToolkit
 {
     public class AsaTribe
     {
         public DateTime TribeFileTimestamp { get; set; } = DateTime.MinValue;
-        public List<AsaObject> Objects { get; private set; } = new List<AsaObject>();
-        public List<AsaProperty<dynamic>> Properties => Tribe?.Properties ?? new List<AsaProperty<dynamic>>();
-        public AsaObject? Tribe
+        public List<AsaObject> Objects { get; init; } = [];
+        public List<AsaProperty<dynamic>> Properties => Tribe?.Properties ?? [];
+        
+        public AsaObject? Tribe => Objects.FirstOrDefault(o => 
+            o.ClassName?.EndsWith("PrimalTribeData", StringComparison.OrdinalIgnoreCase) ?? false);
+
+        public static bool TryRead(AsaArchive archive, bool usePropertiesOffset, [NotNullWhen(true)] out AsaTribe? result)
         {
-            get
+            ArgumentNullException.ThrowIfNull(archive);
+
+            try
             {
-                return Objects.FirstOrDefault(o => o.ClassName.EndsWith("PrimalTribeData"));
-            }
-        }
+                _ = archive.ReadInt32(); // tribeVersion
+                int tribeCount = archive.ReadInt32();
 
-        public void Read(AsaArchive archive, bool usePropertiesOffset = true)
-        {
-            var tribeVersion = archive.ReadInt();
-            var tribeCount = archive.ReadInt();
+                var objects = new List<AsaObject>();
 
-            Objects.Clear();
-
-            while (tribeCount-- > 0)
-            {
-                var aObject = new AsaObject(archive);
-                Objects.Add(aObject);
-            }
-
-            foreach (var aObject in Objects)
-            {
-                aObject.ReadProperties(archive, usePropertiesOffset);
-            }
-
-        }
-
-        public void Read(string filename, Dictionary<int, string> nameTable)
-        {
-            TribeFileTimestamp = File.GetLastWriteTimeUtc(filename);
-
-            using (var ms = new MemoryStream(File.ReadAllBytes(filename)))
-            {
-                using (AsaArchive archive = new AsaArchive(ms))
+                while (tribeCount-- > 0)
                 {
-                    archive.NameTable = nameTable;
-                    var tribeVersion = archive.ReadInt();
-                    var tribeCount = archive.ReadInt();
-
-                    Objects.Clear();
-
-                    while (tribeCount-- > 0)
+                    if (AsaObject.TryRead(archive, out var obj))
                     {
-                        var aObject = new AsaObject(archive);
-                        Objects.Add(aObject);
+                        objects.Add(obj);
                     }
-
-                    foreach (var aObject in Objects)
-                    {
-                        aObject.ReadProperties(archive);
-                    }
-
                 }
 
-                ms.Close();
+                foreach (var obj in objects)
+                {
+                    obj.TryReadProperties(archive, usePropertiesOffset);
+                }
+
+                result = new AsaTribe { Objects = objects };
+                return true;
+            }
+            catch
+            {
+                result = null;
+                return false;
             }
         }
 
+        public static bool TryReadFromFile(string filename, Dictionary<int, string> nameTable, [NotNullWhen(true)] out AsaTribe? result)
+        {
+            if (!File.Exists(filename))
+            {
+                result = null;
+                return false;
+            }
+
+            try
+            {
+                var timestamp = File.GetLastWriteTimeUtc(filename);
+
+                using var ms = new MemoryStream(File.ReadAllBytes(filename));
+                using var archive = new AsaArchive(ms);
+                
+                archive.NameTable = nameTable;
+
+                if (TryRead(archive, true, out result))
+                {
+                    result.TribeFileTimestamp = timestamp;
+                    return true;
+                }
+
+                return false;
+            }
+            catch
+            {
+                result = null;
+                return false;
+            }
+        }
     }
 }

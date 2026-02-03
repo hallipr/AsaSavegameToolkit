@@ -1,200 +1,218 @@
-﻿using AsaSavegameToolkit.Types;
+using System.Diagnostics.CodeAnalysis;
+using System.Numerics;
 using System.Text;
+
+using AsaSavegameToolkit.Types;
 
 namespace AsaSavegameToolkit
 {
+
     public class AsaArchive : IDisposable
     {
-        private const int bufferSize = 4096;
-        private readonly byte[] smallByteBuffer = new byte[bufferSize];
+        private readonly Stream _stream;
+        private readonly BinaryReader _reader;
 
-        private readonly Stream mbb;
-        private readonly BinaryReader mbbReader;
+        /// <summary>
+        /// List of all sections read from the file
+        /// </summary>
+        public List<ReadSection> SectionsRead { get; } = [];
+        public List<SkippedSection> SectionsSkipped { get; } = [];
 
-
-        public Dictionary<int, string> ConstantNameTable { get; set; } = new Dictionary<int, string>();
-        public Dictionary<int, string> NameTable { get; set; } = new Dictionary<int, string>();
-        public bool HasNameTable => (NameTable != null && NameTable.Count > 0) || (ConstantNameTable != null && ConstantNameTable.Count > 0);
-        public bool HasInstanceInNameTable { get; private set; }
+        public Dictionary<int, string> ConstantNameTable { get; set; } = [];
+        public Dictionary<int, string> NameTable { get; set; } = [];
+        public bool HasNameTable => (NameTable?.Count > 0) || (ConstantNameTable?.Count > 0);
+        public bool HasInstanceInNameTable { get; set; }
 
         public long Position
         {
-            get => mbb.Position;
-            set => mbb.Position = value;
+            get => _stream.Position;
+            set => _stream.Position = value;
         }
 
-        public long Limit => mbb.Length;
-
+        public long Limit => _stream.Length;
         public short SaveVersion { get; internal set; }
 
         public AsaArchive(Stream stream)
         {
-            mbb = stream;
-            mbbReader = new BinaryReader(mbb);
+            _stream = stream ?? throw new ArgumentNullException(nameof(stream));
+            _reader = new BinaryReader(_stream);
         }
 
-        #region read data
-
-        public void SkipBytes(int count)
+        /// <summary>
+        /// Records a section that was read from the file
+        /// </summary>
+        public void RecordRead(long offset, long length, string type, bool complete = true)
         {
-
-            mbb.Seek(count, SeekOrigin.Current);
+            SectionsRead.Add(new ReadSection(offset, length, type, complete));
         }
 
-        public string ReadString()
+        public void RecordSkipped(long offset, long length, string reason)
         {
-            int size = mbbReader.ReadInt32();
+            SectionsSkipped.Add(new SkippedSection(offset, length, reason));
+        }
 
-            switch (size)
+        #region Read Operations
+
+        private ReadTracker Track(string type)
+        {
+            return new ReadTracker(this, type, complete: true);
+        }
+
+        private T Track<T>(string type, Func<T> action)
+        {
+            using var tracker = Track(type);
+            return action();
+        }
+
+        public void SkipBytes(int count, string reason = "skipped")
+        {
+            var offset = _stream.Position;
+            RecordSkipped(offset, count, reason);            
+            _stream.Seek(count, SeekOrigin.Current);
+        }
+
+        public bool TryReadString([NotNullWhen(true)] out string? value)
+        {
+            using var tracker = Track("String");
+
+            int size = ReadInt32("size");
+            if(size == 0)
             {
-                case 0:
-                    return null;
-                case 1:
-                    mbb.Seek(1, SeekOrigin.Current);
-                    return string.Empty;
-                case -1:
-                    mbb.Seek(2, SeekOrigin.Current);
-                    return string.Empty;
+                value = null;
+                return false;
             }
 
             bool multibyte = size < 0;
-            int absSize = Math.Abs(size);
-            int readSize = multibyte ? absSize * 2 : absSize;
+            int byteSize = multibyte ? 2 : 1;
+            int readSize = Math.Abs(size) * byteSize;
 
-            if (readSize + mbb.Position > mbb.Length)
+            if (readSize + _stream.Position > _stream.Length)
             {
-                throw new IndexOutOfRangeException();
+                //logger.LogWarning("String size exceeds stream length.");
+                value = null;
+                return false;
             }
 
-            bool isLarge = readSize > bufferSize;
-
-
-            if (multibyte)
+            try
             {
-                byte[] buffer = isLarge ? new byte[readSize] : smallByteBuffer;
-                mbbReader.Read(buffer, 0, readSize);
-                return Encoding.Unicode.GetString(buffer, 0, readSize - 2);
+                byte[] buffer = ReadBytes(readSize - byteSize, "string bytes");
+                value = (multibyte ? Encoding.Unicode : Encoding.ASCII).GetString(buffer);
+                ReadBytes(byteSize, "null term");
+                return true;
             }
-            else
+            catch
             {
-                byte[] buffer = isLarge ? new byte[absSize] : smallByteBuffer;
-                mbb.Read(buffer, 0, absSize);
-
-                return Encoding.ASCII.GetString(buffer, 0, absSize - 1);
+                value = null;
+                return false;
             }
         }
 
-        public AsaName ReadName()
+        public bool TryReadName([NotNullWhen(true)] out AsaName? name)
         {
             if (!HasNameTable)
             {
-                return AsaName.From(ReadString());
+                if (TryReadString(out var str))
+                {
+                    name = AsaName.From(str);
+                    return true;
+                }
+                name = null;
+                return false;
             }
 
-            return readNameFromTable();
+            return TryReadNameFromTable(out name);
         }
 
-        private AsaName readNameFromTable()
+        private bool TryReadNameFromTable([NotNullWhen(true)] out AsaName? name)
         {
-            int id = mbbReader.ReadInt32();
-            string name = string.Empty;
-            if (NameTable.ContainsKey(id))
+            using var tracker = Track("Name");
+            try
             {
-                name = NameTable[id];
-            }
-            else
-            {
-                if (ConstantNameTable.Count > 0)
+                int id = _reader.ReadInt32();
+                
+                if (!NameTable.TryGetValue(id, out var nameString))
                 {
-                    if (ConstantNameTable.ContainsKey(id))
+                    if (!ConstantNameTable.TryGetValue(id, out nameString))
                     {
-                        name = ConstantNameTable[id];
-                    }
-                    else
-                    {
-                        name = string.Concat("Unknown_", id);
+                        nameString = $"Unknown_{id}";
                     }
                 }
-                else
+
+                if (HasInstanceInNameTable)
                 {
-                    return null;
+                    name = AsaName.From(nameString);
+                    return true;
                 }
-            }
 
-            if (HasInstanceInNameTable)
+                int instance = _reader.ReadInt32();
+                name = AsaName.From(nameString, instance);
+                return true;
+            }
+            catch
             {
-                return AsaName.From(name);
+                name = null;
+                return false;
             }
-
-            int instance = mbbReader.ReadInt32();
-
-            // Get or create AsaName
-            return AsaName.From(name, instance);
         }
 
-        public float ReadFloat()
+        public int ReadInt32(string name = "int32") => Track(name, _reader.ReadInt32);
+        public uint ReadUInt32(string name = "uint32") => Track(name, _reader.ReadUInt32);
+        public short ReadInt16(string name = "int16") => Track(name, _reader.ReadInt16);
+        public long ReadInt64(string name = "int64") => Track(name, _reader.ReadInt64);
+        public float ReadSingle(string name = "float") => Track(name, _reader.ReadSingle);
+        public double ReadDouble(string name = "double") => Track(name, _reader.ReadDouble);
+        public byte ReadByte(string name = "byte") => Track(name, _reader.ReadByte);
+        public byte[] ReadBytes(int length, string name = "bytes") => Track(name, () => _reader.ReadBytes(length));
+        public bool ReadBool(string name = "bool") => Track(name, () => _reader.ReadInt32() != 0);
+
+        public bool TryReadStringStored([NotNullWhen(true)] out string? value)
         {
-            return mbbReader.ReadSingle();
+            try
+            {
+                int length = ReadByte();
+                SkipBytes(1);
+                value = Encoding.UTF8.GetString(ReadBytes(length - 1));
+                return true;
+            }
+            catch
+            {
+                value = null;
+                return false;
+            }
         }
 
-        public int ReadInt()
-        {
-            return mbbReader.ReadInt32();
-        }
-
-        public uint ReadUInt()
-        {
-            return mbbReader.ReadUInt32();
-        }
-
-        public short ReadShort()
-        {
-            return mbbReader.ReadInt16();
-        }
-
-        public long ReadLong()
-        {
-            return mbbReader.ReadInt64();
-        }
-
-        public double ReadDouble()
-        {
-            return mbbReader.ReadDouble();
-        }
-
-        public byte ReadByte()
-        {
-            return mbbReader.ReadByte();
-        }
-
-        public byte[] ReadBytes(int length)
-        {
-            return mbbReader.ReadBytes(length);
-        }
-
-        public bool ReadBool()
-        {
-            int val = mbbReader.ReadInt32();
-            return val != 0;
-        }
-
-
-        public string ReadStringStored()
-        {
-            int length = ReadByte();
-            SkipBytes(1);
-            return UTF8Encoding.UTF8.GetString(ReadBytes(length - 1));
-
-        }
-
-        #endregion read data
-
+        #endregion
 
         public void Dispose()
         {
-            mbb?.Dispose();
-            mbbReader?.Dispose();
+            _stream?.Dispose();
+            _reader?.Dispose();
+            GC.SuppressFinalize(this);
         }
 
+        private class ReadTracker : IDisposable
+        {
+            private readonly AsaArchive _archive;
+            private readonly long _startPosition;
+            private readonly string _type;
+            private readonly bool _complete;
+
+            public ReadTracker(AsaArchive archive, string type, bool complete = true)
+            {
+                _archive = archive;
+                _startPosition = archive.Position;
+                _type = type;
+                _complete = complete;
+            }
+
+            public void Dispose()
+            {
+                long length = _archive.Position - _startPosition;
+                if (length > 0)
+                {
+                    _archive.RecordRead(_startPosition, length, _type, _complete);
+                }
+            }
+        }
     }
 }

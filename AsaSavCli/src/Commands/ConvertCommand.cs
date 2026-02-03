@@ -49,7 +49,10 @@ public class ConvertCommand : CommandDefinition
         catch (Exception ex)
         {
             logger.LogError($"Error reading save file: {ex.Message}");
-            logger.LogError(ex.StackTrace);
+            if (ex.StackTrace != null)
+            {
+                logger.LogError(ex.StackTrace);
+            }
             Environment.Exit(1);
         }
     }

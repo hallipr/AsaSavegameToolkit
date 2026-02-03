@@ -1,24 +1,27 @@
-﻿namespace AsaSavegameToolkit.Structs
+namespace AsaSavegameToolkit.Structs
 {
-    public class AsaQuat
+    public readonly struct AsaQuat
     {
-        private readonly double x;
-        private readonly double y;
-        private readonly double z;
-        private readonly double w;
-
-        public double X => x;
-        public double Y => y;
-        public double Z => z;
-        public double W => w;
-
+        public double X { get; init; }
+        public double Y { get; init; }
+        public double Z { get; init; }
+        public double W { get; init; }
 
         public AsaQuat(AsaArchive archive)
         {
-            x = archive.ReadDouble();
-            y = archive.ReadDouble();
-            z = archive.ReadDouble();
-            w = archive.ReadDouble();
+            ArgumentNullException.ThrowIfNull(archive);
+            X = archive.ReadDouble();
+            Y = archive.ReadDouble();
+            Z = archive.ReadDouble();
+            W = archive.ReadDouble();
+        }
+
+        public AsaQuat(double x, double y, double z, double w)
+        {
+            X = x;
+            Y = y;
+            Z = z;
+            W = w;
         }
     }
 }

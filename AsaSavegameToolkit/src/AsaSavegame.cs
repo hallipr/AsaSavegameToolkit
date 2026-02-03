@@ -1,721 +1,387 @@
-﻿using AsaSavegameToolkit.Extensions;
-using AsaSavegameToolkit.Propertys;
-using AsaSavegameToolkit.Structs;
-using AsaSavegameToolkit.Types;
-using Microsoft.Data.Sqlite;
 using System.Collections.Concurrent;
-using System.Data;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.Serialization;
+using System.Text.Json;
+
+using AsaSavegameToolkit.Extensions;
+using AsaSavegameToolkit.Files;
+using AsaSavegameToolkit.Structs;
+
+using Microsoft.Data.Sqlite;
 
 namespace AsaSavegameToolkit
 {
     public class AsaSavegame
     {
-        short saveVersion = 0;
-        double gameTime = 0;
-        long nameTableOffset = 0;
+        private string _saveFilename = string.Empty;
+        private readonly Dictionary<int, string> _nameTable = [];
+        private readonly Dictionary<Guid, AsaGameObject> _gameObjects = [];
+        private readonly List<AsaTribe> _tribeData = [];
+        private readonly List<AsaProfile> _profileData = [];
+        private readonly Dictionary<Guid, AsaLocation> _actorLocations = [];
 
-        string saveFilename = string.Empty;
-        string sqlConnectionString = string.Empty;
-        Dictionary<int, string> nameTable = new Dictionary<int, string>();
-        Dictionary<Guid, AsaGameObject> gameObjects = new Dictionary<Guid, AsaGameObject>();
-        List<AsaTribe> tribeData = new List<AsaTribe>();
-        List<AsaProfile> profileData = new List<AsaProfile>();
-        Dictionary<Guid, byte[]> gameData = new Dictionary<Guid, byte[]>();
-        Dictionary<Guid, AsaLocation> actorLocations = new Dictionary<Guid, AsaLocation>();
+        public short SaveVersion { get; private set; }
+        public double GameTime { get; private set; }
+        public List<string> DataFiles { get; } = [];
+        public Dictionary<string, FieldReadMap> FieldReads = [];
+        public AsaGameObject[] Objects => [.. _gameObjects.Values];
+        public AsaTribe[] Tribes => [.. _tribeData];
+        public AsaProfile[] Profiles => [.. _profileData];
+        public string? DebugOutputPath { get; set; }
 
-        public double GameTime => gameTime;
-
-        public AsaGameObject[] Objects
+        public bool TryGetActorLocation(Guid id, [NotNullWhen(true)] out AsaLocation? location)
         {
-            get
+            if (_actorLocations.TryGetValue(id, out var loc))
             {
-                return gameObjects.Values.ToArray();
+                location = loc;
+                return true;
             }
+            location = null;
+            return false;
         }
 
-        public AsaLocation? GetActorLocation(Guid id)
+        public bool TryGetObjectByGuid(Guid guid, [NotNullWhen(true)] out AsaGameObject? gameObject)
         {
-            if (actorLocations.ContainsKey(id))
-            {
-                return actorLocations[id];
-            }
-            return null;
+            return _gameObjects.TryGetValue(guid, out gameObject);
         }
 
-        public AsaGameObject? GetObjectByGuid(Guid guid)
+        public bool TryRead(string filename, int maxCores)
         {
+            ArgumentException.ThrowIfNullOrEmpty(filename);
+            if (!File.Exists(filename))
+            {
+                return false;
+            }
+
             try
             {
-                return gameObjects[guid];
+                _saveFilename = filename;
+                string savePath = Path.GetDirectoryName(_saveFilename) ?? AppContext.BaseDirectory ?? string.Empty;
+
+                string sqlConnectionString = $"Data Source={_saveFilename};Filename={_saveFilename};Mode=ReadOnly";
+
+                using (var connection = new SqliteConnection(sqlConnectionString))
+                {
+                    connection.Open();
+
+                    if (!TryReadSaveHeader(connection))
+                    {
+                        return false;
+                    }
+
+                    TryReadGameData(connection, maxCores);
+                    TryReadActorLocations(connection);
+                    TryReadStoredTribesAndPlayers(connection);
+
+                    connection.Close();
+                }
+
+                SqliteConnection.ClearAllPools();
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+
+                if (_tribeData.Count == 0)
+                {
+                    TryReadTribeFiles(savePath, maxCores);
+                }
+
+                if (_profileData.Count == 0)
+                {
+                    TryReadProfileFiles(savePath, maxCores);
+                }
+
+                return true;
             }
             catch
             {
-                return null;
-            }
-
-        }
-
-        public AsaTribe[] Tribes
-        {
-            get
-            {
-                return tribeData.ToArray();
+                return false;
             }
         }
 
-        public AsaProfile[] Profiles
+        private bool TryReadSaveHeader(SqliteConnection connection)
         {
-            get
+            try
             {
-                return profileData.ToArray();
-            }
-        }
-
-        public List<string> DataFiles = new List<string>();
-
-        public void Read(string filename, int maxCores)
-        {
-            long startTicks = DateTime.Now.Ticks;
-            long endTicks = DateTime.Now.Ticks;
-
-            saveFilename = filename;
-            string savePath = Path.GetDirectoryName(saveFilename) ?? AppContext.BaseDirectory;
-
-            sqlConnectionString = string.Concat("Data Source=", saveFilename, ";Filename=", saveFilename, ";Mode=ReadOnly");
-
-            using (SqliteConnection connection = new SqliteConnection(sqlConnectionString))
-            {
-                connection.Open();
-
-                readBaseData(connection);
-                readGameData(connection);
-                readActorLocations(connection);
-                readStoredTribesAndPlayers(connection);
-
-                connection.Close();
-                connection.Dispose();
-            }
-            SqliteConnection.ClearAllPools();
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-
-            endTicks = DateTime.Now.Ticks;
-            //time to read data from db.
-
-            parseGameObjects(maxCores);
-
-
-            gameData.Clear(); //no longer needed, parsed into Objects as list of AsaGameObject
-
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-
-            //addComponents();
-
-            parseStoredCreatures(maxCores); //held in CustomItemData as byte array with some custom compression
-
-
-
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-
-            if (tribeData.Count == 0)
-            {
-                //not loaded from .ark, load from .arktribe files
-                readTribeFiles(savePath, maxCores); // Search and parse and .arktribe file in the save directory
-            }
-
-            if (profileData.Count == 0)
-            {
-                //not loaded from .ark, load from .arkprofile files
-                readProfileFiles(savePath, maxCores); // Search and parse and .arkprofile file in the save directory
-            }
-
-            endTicks = DateTime.Now.Ticks;
-            //total time load save data
-        }
-
-        private void addComponents(int maxCores)
-        {
-            long startTicks = DateTime.Now.Ticks;
-            long endTicks = DateTime.Now.Ticks;
-
-            var withParentNames = Objects.Where(o => o.ParentNames.Any()).ToList();
-            Parallel.ForEach(withParentNames, new ParallelOptions() { MaxDegreeOfParallelism = maxCores }, childObject =>
-            {
-                //Parallel.ForEach(childObject.ParentNames, parentName =>
-                foreach (var parentName in childObject.ParentNames)
+                using var commandHeader = new SqliteCommand("SELECT value FROM custom WHERE key = 'SaveHeader'", connection);
+                using var reader = commandHeader.ExecuteReader();
+                
+                while (reader.Read())
                 {
-                    var parentObject = Objects.FirstOrDefault(o => o.Names[0] == parentName);
-                    if (parentObject != null)
+                    if (TryGetSqlBytes(reader, 0, out var dataBytes))
                     {
-                        parentObject.AddComponent(childObject);
-                    }
-                }
-                //);
-            }
-            );
+                        using var ms = new MemoryStream(dataBytes);
+                        using var archive = new AsaArchive(ms);
 
-            endTicks = DateTime.Now.Ticks;
-            //time to add components
-
-        }
-
-        private void readProfileFiles(string savePath, int maxCores)
-        {
-            long startTicks = DateTime.Now.Ticks;
-            long endTicks = DateTime.Now.Ticks;
-
-            ConcurrentBag<AsaProfile> profileFileBag = new ConcurrentBag<AsaProfile>();
-
-            IEnumerable<string> profileFiles = Directory.EnumerateFiles(savePath, "*.arkprofile");
-            Parallel.ForEach(profileFiles, new ParallelOptions() { MaxDegreeOfParallelism = maxCores }, o =>
-            //foreach(var o in profileFiles)
-            {
-                try
-                {
-
-                    var profileData = new AsaProfile();
-                    profileData.Read(o);
-                    profileFileBag.Add(profileData);
-
-                }
-                catch
-                {
-
-                }
-
-            }
-            );
-
-            profileData = profileFileBag.ToList();
-
-
-
-            endTicks = DateTime.Now.Ticks;
-            //time to read profile data
-
-        }
-
-        private void readTribeFiles(string savePath, int maxCores)
-        {
-            long startTicks = DateTime.Now.Ticks;
-            long endTicks = DateTime.Now.Ticks;
-
-            ConcurrentBag<AsaTribe> tribeFileBag = new ConcurrentBag<AsaTribe>();
-
-            var tribeFiles = Directory.EnumerateFiles(savePath, "*.arktribe");
-            Parallel.ForEach(tribeFiles, new ParallelOptions() { MaxDegreeOfParallelism = maxCores }, o =>
-            //foreach(var o in tribeFiles) 
-            {
-                try
-                {
-                    var tribeData = new AsaTribe();
-                    tribeData.Read(o, new Dictionary<int, string>());
-                    tribeFileBag.Add(tribeData);
-                }
-                catch
-                {
-
-                }
-
-            }
-            );
-
-            tribeData = tribeFileBag.ToList();
-
-            endTicks = DateTime.Now.Ticks;
-            //time to read tribe file data
-        }
-
-        private void parseStoredCreatures(int maxCores)
-        {
-            long startTicks = DateTime.Now.Ticks;
-            long endTicks = DateTime.Now.Ticks;
-
-            ConcurrentDictionary<Guid, AsaGameObject> objectBag = new ConcurrentDictionary<Guid, AsaGameObject>();
-
-            var inventoryContainers = Objects.Where(o => o.Properties.Any(p => p.Name.Equals("MyInventoryComponent"))).ToList();
-
-            var pods = Objects.Where(o => (o.ClassString.Contains("Cryo") || o.ClassString.Contains("Dinoball")) && o.Properties.Any(p => p.Name.ToLower() == "customitemdatas"));
-            Parallel.ForEach(pods, new ParallelOptions() { MaxDegreeOfParallelism = maxCores }, pod =>
-            //foreach(var pod in pods)
-            {
-                var customDataList = pod.Properties.Find(p => p.Name == "CustomItemDatas")?.Value as List<dynamic>;
-
-                if (customDataList != null)
-                {
-                    foreach (List<dynamic> customData in customDataList)
-                    {
-                        AsaProperty<dynamic> customBytes = customData.Find(p => ((AsaProperty<dynamic>)p).Name == "CustomDataBytes");
-                        List<dynamic>? customProperties = customBytes?.Value;
-                        AsaProperty<dynamic> customContainer = customProperties[0];
-
-                        var byteListContainer = customContainer.Value;
-                        AsaGameObject creatureObject = null;
-                        AsaGameObject statusObject = null;
-
-                        Guid inventoryGuid = Guid.NewGuid();
-                        List<Guid> inventoryItems = new List<Guid>();
-
-                        for (int i = 0; i < byteListContainer.Count; i++)
+                        if (!AsaSaveHeader.TryRead(archive, out var header))
                         {
-                            List<dynamic> byteList = byteListContainer[i];
-                            List<dynamic> byteObjectData = (byteList.First() as AsaProperty<dynamic>).Value;
-
-                            if (byteObjectData.Count > 0)
-                            {
-                                byte[] dataBytes = new byte[byteObjectData.Count];
-                                for (int x = 0; x < byteObjectData.Count; x++)
-                                {
-                                    dataBytes[x] = byteObjectData[x];
-                                }
-
-
-                                try
-                                {
-                                    if (i == 0)
-                                    {
-                                        var dataStore = new AsaDataStore(dataBytes);
-
-
-                                        if (dataStore.Objects.Count == 0)
-                                        {
-                                            break;
-                                        }
-
-
-                                        statusObject = dataStore.Objects.FirstOrDefault(c => c.Value.ClassName.Name.Contains("statuscomponent", StringComparison.CurrentCultureIgnoreCase)).Value;
-                                        if (statusObject == null)
-                                        {
-                                            statusObject = dataStore.Objects.FirstOrDefault(c => c.Value.ClassName.Name.Contains("status", StringComparison.CurrentCultureIgnoreCase)).Value;
-                                        }
-                                        creatureObject = dataStore.Objects.First(c => c.Key != statusObject.Guid).Value;
-
-                                        var podContainerRef = pod.Properties.Find(p => p.Name == "OwnerInventory");
-                                        if (podContainerRef != null)
-                                        {
-                                            AsaObjectReference containerId = podContainerRef.Value;
-                                            var podContainerInventory = GetObjectByGuid(Guid.Parse(containerId.Value));
-                                            if (podContainerInventory != null)
-                                            {
-
-                                                var podContainer = inventoryContainers.Find(o => o.Names[0].Equals(podContainerInventory.Names[1]));
-                                                if (podContainer != null)
-                                                {
-                                                    creatureObject.Location = podContainer.Location;
-                                                    if (creatureObject.Properties.Any(c => c.Name == "TargetingTeam") && podContainer.Properties.Any(p => p.Name == "TargetingTeam"))
-                                                    {
-                                                        creatureObject.Properties.RemoveAll(p => p.Name == "TargetingTeam");
-                                                        creatureObject.Properties.Add(podContainer.Properties.First(p => p.Name == "TargetingTeam"));
-                                                    }
-
-                                                    if (creatureObject.Properties.LongCount(c => c.Name == "TribeName") > 0)
-                                                    {
-                                                        creatureObject.Properties.RemoveAll(p => p.Name == "TribeName");
-                                                    }
-
-
-                                                }
-
-                                            }
-                                        }
-
-
-                                        foreach (var o in dataStore.Objects)
-                                        {
-                                            if (actorLocations.ContainsKey(pod.Guid))
-                                            {
-                                                o.Value.Location = actorLocations[pod.Guid];
-                                            }
-
-                                            objectBag.TryAdd(o.Value.Guid, o.Value);
-                                        }
-
-
-
-
-                                    }
-                                    else
-                                    {
-                                        if (dataBytes.Length < 8) continue;
-
-                                        List<AsaProperty<dynamic>> properties = new List<AsaProperty<dynamic>>();
-                                        //skins/costumes/inventory
-                                        using (Stream stream = new MemoryStream(dataBytes))
-                                        {
-                                            using (AsaArchive dataArchive = new AsaArchive(stream))
-                                            {
-                                                var archiveVersion = dataArchive.ReadInt();
-                                                AsaProperty<dynamic>? prop = null;
-                                                try
-                                                {
-                                                    prop = AsaPropertyRegistry.ReadProperty(dataArchive);
-                                                }
-                                                catch
-                                                {
-
-                                                }
-
-                                                while (prop != null)
-                                                {
-                                                    properties.Add(prop);
-                                                    try
-                                                    {
-                                                        prop = AsaPropertyRegistry.ReadProperty(dataArchive);
-                                                    }
-                                                    catch
-                                                    {
-                                                        break;
-                                                    }
-                                                }
-                                            }
-
-                                        }
-
-                                        if (properties.Count > 0)
-                                        {
-                                            properties.Add(new AsaProperty<dynamic>("OwnerInventory", "ObjectProperty", 0, 0, new AsaObjectReference(inventoryGuid)));
-                                            AsaGameObject asaObject = new AsaGameObject(properties);
-                                            inventoryItems.Add(asaObject.Guid);
-                                            objectBag.TryAdd(asaObject.Guid, asaObject);
-                                        }
-                                    }
-
-                                }
-                                catch
-                                {
-
-                                }
-                            }
-
+                            FieldReads["SaveHeader"] = new FieldReadMap(dataBytes.Length, archive.SectionsRead, archive.SectionsSkipped);
+                            return false;
                         }
 
+                        this.SaveVersion = header!.SaveVersion;
+                        this.GameTime = header.GameTime;
+                        this.DataFiles.AddRange(header.DataFiles);
 
-                        if (inventoryItems.Count > 0)
+                        foreach (var (key, value) in header.NameTable)
                         {
-                            //InventoryItems
-                            var inventoryItemReferences = new List<object>();
-                            foreach (var itemGuid in inventoryItems)
-                            {
-                                inventoryItemReferences.Add(new AsaObjectReference(itemGuid));
-                            }
-                            var inventoryItemContainer = new AsaProperty<dynamic>("InventoryItems", "ArrayProperty", 0, 0, inventoryItemReferences);
-
-
-                            List<AsaProperty<dynamic>> inventoryProperties = new List<AsaProperty<dynamic>>();
-
-                            inventoryProperties.Add(inventoryItemContainer);
-                            inventoryProperties.Add(new AsaProperty<dynamic>("bInitializedMe", "BoolProperty", 0, 0, true));
-                            inventoryProperties.Add(new AsaProperty<dynamic>("ItemArchetype", "ObjectProperty", 0, 0, new AsaObjectReference("PrimalInventor yBP_StoredCreature")));
-
-                            var inventoryComponent = new AsaGameObject(inventoryGuid, inventoryProperties);
-                            objectBag.TryAdd(inventoryGuid, inventoryComponent);
-
-                            if (creatureObject != null)
-                            {
-                                creatureObject.Properties.Add(new AsaProperty<dynamic>("MyInventoryComponent", "ObjectProperty", 0, 0, new AsaObjectReference(inventoryGuid)));
-                            }
-
-
+                            this._nameTable[key] = value;
                         }
 
-                    }
-
-                }
-
-
-
-            }
-            );
-
-            if (objectBag.Count > 0)
-            {
-                objectBag.ToList().ForEach(p => gameObjects.Add(p.Key, p.Value));
-            }
-            objectBag.Clear();
-
-            endTicks = DateTime.Now.Ticks;
-            //time to parse stored creatures
-            var timeTaken = TimeSpan.FromTicks(endTicks - startTicks);
-            Debug.Print($"parseStoredCreatures took {TimeSpan.FromTicks(endTicks - startTicks).ToString(@"mm\:ss")}");
-        }
-
-        private void readStoredTribesAndPlayers(SqliteConnection connection)
-        {
-            tribeData = new List<AsaTribe>();
-            profileData = new List<AsaProfile>();
-
-            using (SqliteCommand commandCustom = new SqliteCommand("SELECT value from custom WHERE key = 'GameModeCustomBytes'"))
-            {
-                commandCustom.Connection = connection;
-                using (SqliteDataReader readerCustom = commandCustom.ExecuteReader())
-                {
-                    while (readerCustom.Read())
-                    {
-                        byte[] customObjects = GetSqlBytes(readerCustom, 0);
-                        using (MemoryStream ms = new MemoryStream(customObjects))
-                        {
-                            using (AsaArchive archive = new AsaArchive(ms))
-                            {
-                                var ds = new AsaTribeStore(archive);
-                                if (ds.Tribes.Count > 0)
-                                {
-                                    tribeData.AddRange(ds.Tribes);
-                                }
-                                if (ds.Profiles.Count > 0)
-                                {
-                                    profileData.AddRange(ds.Profiles);
-                                }
-                            }
-                        }
-
-                        break;
+                        WriteDebugFile("SaveHeader.json", header);
                     }
                 }
+
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 
-        private void readActorLocations(SqliteConnection connection)
+        private void WriteDebugFile(string fileName, object value)
         {
-            long startTicks = DateTime.Now.Ticks;
-            long endTicks = DateTime.Now.Ticks;
-
-            using (SqliteCommand commandLocations = new SqliteCommand("SELECT value from custom WHERE key = 'ActorTransforms'"))
+            var formatter = new FracturedJson.Formatter();
+            if(string.IsNullOrEmpty(DebugOutputPath))
             {
-                commandLocations.Connection = connection;
-                using (SqliteDataReader readerLocations = commandLocations.ExecuteReader())
+                return;
+            }
+
+            if(!Directory.Exists(DebugOutputPath))
+            {
+                Directory.CreateDirectory(DebugOutputPath);
+            }
+
+            var path = Path.Join(DebugOutputPath, fileName);
+            var json = formatter.Serialize(value);
+            File.WriteAllText(path, json);
+        }
+
+        private bool TryReadGameData(SqliteConnection connection, int maxCores)
+        {
+            try
+            {
+                var gameData = new Dictionary<Guid, byte[]>();
+
+                using (var commandData = new SqliteCommand("SELECT key, value FROM game", connection))
                 {
-                    while (readerLocations.Read())
-                    {
-                        byte[] locationObjects = GetSqlBytes(readerLocations, 0);
-                        using (MemoryStream ms = new MemoryStream(locationObjects))
-                        {
-                            using (AsaArchive archive = new AsaArchive(ms))
-                            {
-                                Guid objectId = GuidExtensions.ToGuid(archive.ReadBytes(16));
-                                while (objectId != Guid.Empty)
-                                {
-                                    var locX = archive.ReadDouble();
-                                    var locY = archive.ReadDouble();
-                                    var locZ = archive.ReadDouble();
-
-                                    var locPitch = archive.ReadDouble();
-                                    var locYaw = archive.ReadDouble();
-                                    var locRoll = archive.ReadDouble();
-
-                                    archive.SkipBytes(8);
-
-                                    actorLocations.Add(objectId, new AsaLocation(locX, locY, locZ, locPitch, locYaw, locRoll));
-
-                                    //next
-                                    objectId = GuidExtensions.ToGuid(archive.ReadBytes(16));
-                                }
-                            }
-                        }
-
-                        break;
-                    }
-                }
-            }
-
-            endTicks = DateTime.Now.Ticks;
-            //time to read actor location data
-        }
-
-        private void readBaseData(SqliteConnection connection)
-        {
-            long startTicks = DateTime.Now.Ticks;
-            long endTicks = DateTime.Now.Ticks;
-
-            using (SqliteCommand commandHeader = new SqliteCommand("SELECT value from custom WHERE key = 'SaveHeader'"))
-            {
-                commandHeader.Connection = connection;
-
-                //read header
-                using (SqliteDataReader reader = commandHeader.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        var dataBytes = GetSqlBytes(reader, 0);
-                        using (MemoryStream ms = new MemoryStream(dataBytes))
-                        {
-                            using (AsaArchive archive = new AsaArchive(ms))
-                            {
-                                readHeader(archive);
-                                readParts(archive);
-                                readNametable(archive);
-                            }
-                        }
-
-                    }
-                }
-            }
-
-            endTicks = DateTime.Now.Ticks;
-            //time to read header information
-        }
-        private void readHeader(AsaArchive archive)
-        {
-            var unknownInt1 = 0;
-            var unknownInt2 = 0;
-
-            saveVersion = archive.ReadShort();
-            nameTableOffset = archive.ReadInt();
-            gameTime = archive.ReadDouble();
-
-            if (saveVersion > 11)
-            {
-                unknownInt1 = archive.ReadInt(); //582
-            }
-
-        }
-
-        private void readParts(AsaArchive archive)
-        {
-            DataFiles.Clear();
-
-            var dataFileCount = archive.ReadInt();
-            while (dataFileCount-- > 0)
-            {
-                var nameString = archive.ReadString();
-                var recordTerminator = archive.ReadInt(); // seems to always be -1
-
-                DataFiles.Add(nameString);
-            }
-
-            //next looks to me more map/data file names as per previous but can't work it out....
-            var unknown1 = archive.ReadInt();
-            var unknown2 = archive.ReadInt();
-        }
-
-        private void readNametable(AsaArchive archive)
-        {
-            nameTable.Clear();
-
-            archive.Position = nameTableOffset;
-
-            var nameCount = archive.ReadInt();
-
-            while (nameCount-- > 0)
-            {
-                var nameIndex = archive.ReadInt();
-                var nameString = archive.ReadString();
-
-                if (nameString.Any(s => s == '.'))
-                {
-                    nameString = nameString.Substring(nameString.LastIndexOf('.') + 1);
-                }
-
-                nameTable.Add(nameIndex, nameString);
-            }
-        }
-
-
-        private void readGameData(SqliteConnection connection)
-        {
-            long startTicks = DateTime.Now.Ticks;
-            long endTicks = DateTime.Now.Ticks;
-
-            using (SqliteCommand commandData = new SqliteCommand("SELECT key, value FROM game"))
-            {
-                commandData.Connection = connection;
-                using (SqliteDataReader readerData = commandData.ExecuteReader())
-                {
+                    using var readerData = commandData.ExecuteReader();
                     while (readerData.Read())
                     {
-                        byte[] keyBytes = GetSqlBytes(readerData, 0);
-                        Guid guid = GuidExtensions.ToGuid(keyBytes);
-
-                        byte[] valueBytes = GetSqlBytes(readerData, 1);
-                        try
+                        if (TryGetSqlBytes(readerData, 0, out var keyBytes) &&
+                            TryGetSqlBytes(readerData, 1, out var valueBytes))
                         {
-                            gameData.Add(guid, valueBytes);
+                            Guid guid = keyBytes.ToGuid();
+                            gameData.TryAdd(guid, valueBytes);
                         }
-                        catch
-                        {
-
-                        }
-
                     }
                 }
-            }
 
-            endTicks = DateTime.Now.Ticks;
-            //time to read game data
+                if (gameData.Count == 0)
+                {
+                    return false;
+                }
+
+                return TryParseGameObjects(gameData, maxCores);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
-        private void parseGameObjects(int maxCores)
+        private bool TryParseGameObjects(Dictionary<Guid, byte[]> gameData, int maxCores)
         {
-            if (gameData.Count == 0) return;
-            gameObjects.Clear();
+            _gameObjects.Clear();
 
-            long startTicks = DateTime.Now.Ticks;
-            long endTicks = DateTime.Now.Ticks;
-
-            ConcurrentDictionary<Guid, AsaGameObject> asaGameObjectDictionary = new ConcurrentDictionary<Guid, AsaGameObject>();
+            var objectBag = new ConcurrentDictionary<Guid, AsaGameObject>();
 
             Parallel.ForEach(gameData, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, objectData =>
-            //foreach(var objectData in gameData) 
-            //gameData.AsParallel().ForAll(objectData =>
             {
-                using (var ms = new MemoryStream(objectData.Value))
+                try
                 {
-                    using (AsaArchive archive = new AsaArchive(ms))
+                    using var ms = new MemoryStream(objectData.Value);
+                    using var archive = new AsaArchive(ms);
+                    
+                    archive.NameTable = _nameTable;
+                    archive.SaveVersion = SaveVersion;
+
+                    if (AsaGameObject.TryRead(objectData.Key, archive, out var gameObject))
                     {
-                        archive.NameTable = nameTable;
-                        archive.SaveVersion = saveVersion;
-                        var gameObject = new AsaGameObject(objectData.Key, archive);
-
-                        if (actorLocations.ContainsKey(objectData.Key))
+                        if (TryGetActorLocation(objectData.Key, out var location))
                         {
-                            gameObject.Location = actorLocations[objectData.Key];
+                            gameObject.Location = location;
                         }
 
-                        if (asaGameObjectDictionary.ContainsKey(gameObject.Guid))
+                        if (objectBag.ContainsKey(gameObject.Guid))
                         {
-                            gameObject.Guid = Guid.NewGuid();
+                            gameObject = gameObject with { Guid = Guid.NewGuid() };
                         }
 
-                        asaGameObjectDictionary.TryAdd(gameObject.Guid, gameObject);
+                        objectBag.TryAdd(gameObject.Guid, gameObject);
+                        WriteDebugFile($"{objectData.Key}.json", gameObject);
+                    }
+                    else
+                    {
+                        WriteDebugFile($"{objectData.Key}.json", new FieldReadMap(objectData.Value.Length, archive.SectionsRead, archive.SectionsSkipped));
                     }
                 }
-            }
-            );
+                catch
+                {
+                    // Skip failed objects
+                }
+            });
 
-            if (asaGameObjectDictionary.Count > 0)
+            foreach (var (guid, obj) in objectBag)
             {
-
-
-                gameObjects = asaGameObjectDictionary.ToDictionary(kvp => kvp.Key,
-                                                          kvp => kvp.Value);
+                _gameObjects.Add(guid, obj);
             }
-            asaGameObjectDictionary.Clear();
 
-            endTicks = DateTime.Now.Ticks;
-            Debug.Print($"parseGameObjects took {TimeSpan.FromTicks(endTicks - startTicks).ToString(@"mm\:ss")}");
-            //time to parse game objects
+            return _gameObjects.Count > 0;
         }
 
-
-        private byte[] GetSqlBytes(SqliteDataReader reader, int fieldIndex)
+        private bool TryReadActorLocations(SqliteConnection connection)
         {
-            const int CHUNK_SIZE = 2 * 1024;
-            byte[] buffer = new byte[CHUNK_SIZE];
-            long bytesRead;
-            long fieldOffset = 0;
-            using (MemoryStream stream = new MemoryStream())
+            try
             {
+                using var command = new SqliteCommand("SELECT value FROM custom WHERE key = 'ActorTransforms'", connection);
+                using var reader = command.ExecuteReader();
+                
+                while (reader.Read())
+                {
+                    if (TryGetSqlBytes(reader, 0, out var locationBytes))
+                    {
+                        using var ms = new MemoryStream(locationBytes);
+                        using var archive = new AsaArchive(ms);
+                        
+                        Guid objectId = archive.ReadBytes(16).ToGuid();
+                        while (objectId != Guid.Empty)
+                        {
+                            var location = new AsaLocation(
+                                archive.ReadDouble(), archive.ReadDouble(), archive.ReadDouble(),
+                                archive.ReadDouble(), archive.ReadDouble(), archive.ReadDouble()
+                            );
+
+                            archive.SkipBytes(8);
+                            _actorLocations.TryAdd(objectId, location);
+
+                            objectId = archive.ReadBytes(16).ToGuid();
+                        }
+                    }
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool TryReadStoredTribesAndPlayers(SqliteConnection connection)
+        {
+            try
+            {
+                using var command = new SqliteCommand("SELECT value FROM custom WHERE key = 'GameModeCustomBytes'", connection);
+                using var reader = command.ExecuteReader();
+                
+                while (reader.Read())
+                {
+                    if (TryGetSqlBytes(reader, 0, out var customBytes))
+                    {
+                        using var ms = new MemoryStream(customBytes);
+                        using var archive = new AsaArchive(ms);
+                        
+                        if (AsaTribeStore.TryRead(archive, out var store))
+                        {
+                            _tribeData.AddRange(store.Tribes);
+                            _profileData.AddRange(store.Profiles);
+                        }
+                    }
+                    break;
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool TryReadTribeFiles(string savePath, int maxCores)
+        {
+            try
+            {
+                var tribeFiles = Directory.EnumerateFiles(savePath, "*.arktribe");
+                var tribeBag = new ConcurrentBag<AsaTribe>();
+
+                Parallel.ForEach(tribeFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, tribeFile =>
+                {
+                    if (AsaTribe.TryReadFromFile(tribeFile, _nameTable, out var tribe))
+                    {
+                        tribeBag.Add(tribe);
+                    }
+                });
+
+                _tribeData.AddRange(tribeBag);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool TryReadProfileFiles(string savePath, int maxCores)
+        {
+            try
+            {
+                var profileFiles = Directory.EnumerateFiles(savePath, "*.arkprofile");
+                var profileBag = new ConcurrentBag<AsaProfile>();
+
+                Parallel.ForEach(profileFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, profileFile =>
+                {
+                    if (AsaProfile.TryReadFromFile(profileFile, out var profile))
+                    {
+                        profileBag.Add(profile);
+                    }
+                });
+
+                _profileData.AddRange(profileBag);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryGetSqlBytes(SqliteDataReader reader, int fieldIndex, [NotNullWhen(true)] out byte[]? bytes)
+        {
+            try
+            {
+                const int ChunkSize = 2 * 1024;
+                byte[] buffer = new byte[ChunkSize];
+                long bytesRead;
+                long fieldOffset = 0;
+
+                using var stream = new MemoryStream();
                 while ((bytesRead = reader.GetBytes(fieldIndex, fieldOffset, buffer, 0, buffer.Length)) > 0)
                 {
                     stream.Write(buffer, 0, (int)bytesRead);
                     fieldOffset += bytesRead;
                 }
-                return stream.ToArray();
-            }
 
+                bytes = stream.ToArray();
+                return true;
+            }
+            catch
+            {
+                bytes = null;
+                return false;
+            }
         }
     }
 }

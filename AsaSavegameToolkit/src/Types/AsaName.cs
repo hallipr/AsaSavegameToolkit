@@ -1,37 +1,27 @@
-﻿using System.Text.RegularExpressions;
+using System.Diagnostics.CodeAnalysis;
+using System.Text.RegularExpressions;
 
 namespace AsaSavegameToolkit.Types
 {
     public sealed class AsaName : IComparable<AsaName>, IComparable, IEquatable<AsaName>
     {
-
-        private readonly string content;
+        private readonly string _content;
 
         public string Name { get; }
-
         public int Instance { get; }
 
-
-        private static readonly Regex nameIndexPattern = new Regex("^(.*)_([0-9]+)$");
-
-        private static ThreadLocal<IDictionary<string, AsaName>> _nameCache = new ThreadLocal<IDictionary<string, AsaName>>(() =>
-        {
-            return new Dictionary<string, AsaName>();
-        });
-
-        ThreadLocal<int> local = new ThreadLocal<int>(() =>
-        {
-            return 10;
-        });
-
-        private static readonly Dictionary<string, AsaName> constantNameCache = new Dictionary<string, AsaName>();
+        private static readonly Regex NameIndexPattern = new(@"^(.*)_([0-9]+)$");
+        
+        private static ThreadLocal<IDictionary<string, AsaName>> _nameCache = new(() => new Dictionary<string, AsaName>());
+        private static readonly Dictionary<string, AsaName> _constantNameCache = [];
 
         public static readonly AsaName NameNone = ConstantPlain("None");
 
         private AsaName(string content)
         {
+            _content = content;
 
-            Match matcher = nameIndexPattern.Match(content);
+            Match matcher = NameIndexPattern.Match(_content);
             if (matcher.Success)
             {
                 Name = matcher.Groups[1].Value;
@@ -39,168 +29,176 @@ namespace AsaSavegameToolkit.Types
             }
             else
             {
-                Name = content;
+                Name = _content;
                 Instance = 0;
             }
-            this.content = content;
         }
 
         private AsaName(string name, int instance, string content)
         {
-
             Name = name;
             Instance = instance;
-            this.content = content;
+            _content = content;
         }
 
-        #region creation function
+        #region Factory Methods
 
-        /// <summary>
-        /// Creates or retrieves an AsaName
-        /// </summary>
-        /// <param name="name"></param>
-        /// <returns></returns>
         public static AsaName From(string name)
         {
+            ArgumentNullException.ThrowIfNull(name);
 
-            if (name == null || !_nameCache.Value.TryGetValue(name, out AsaName value))
+            var cache = _nameCache.Value!;
+            if (!cache.TryGetValue(name, out var value))
             {
                 value = new AsaName(name);
-                _nameCache.Value.Add(name, value);
+                cache.Add(name, value);
             }
             return value;
         }
 
-        /// <summary>
-        /// Creates or retrieves an AsaName
-        /// </summary>
-        /// <param name="name"></param>
-        /// <param name="instance"></param>
-        /// <returns></returns>
         public static AsaName From(string name, int instance)
         {
+            ArgumentNullException.ThrowIfNull(name);
+            
             string instanceName = instance == 0 ? name : $"{name}_{instance - 1}";
 
-            if (instanceName == null || !_nameCache.Value.TryGetValue(instanceName, out AsaName value))
+            var cache = _nameCache.Value!;
+            if (!cache.TryGetValue(instanceName, out var value))
             {
                 value = new AsaName(name, instance, instanceName);
-                _nameCache.Value.Add(instanceName, value);
+                cache.Add(instanceName, value);
             }
             return value;
         }
 
-        /// <summary>
-        /// Creates or retrieves an AsaName with instance 0
-        /// </summary>
-        /// <param name="name"></param>
-        /// <returns></returns>
         public static AsaName FromPlain(string name) => From(name, 0);
 
-        /// <summary>
-        /// Creates or retrieves a permanent AsaName
-        /// </summary>
-        /// <param name="name"></param>
-        /// <returns></returns>
         public static AsaName Constant(string name)
         {
-            if (name == null || !_nameCache.Value.TryGetValue(name, out AsaName value))
+            ArgumentNullException.ThrowIfNull(name);
+            
+            var cache = _nameCache.Value!;
+            if (!cache.TryGetValue(name, out var value))
             {
                 value = new AsaName(name);
-                _nameCache.Value.Add(name, value);
+                cache.Add(name, value);
             }
-            constantNameCache[name] = value;
+            _constantNameCache[name] = value;
             return value;
         }
 
-        /// <summary>
-        /// Creates or retrieves a permanent AsaName
-        /// </summary>
-        /// <param name="name"></param>
-        /// <param name="instance"></param>
-        /// <returns></returns>
         public static AsaName Constant(string name, int instance)
         {
+            ArgumentNullException.ThrowIfNull(name);
+            
             string instanceName = instance == 0 ? name : $"{name}_{instance - 1}";
-            if (instanceName == null || !_nameCache.Value.TryGetValue(instanceName, out AsaName value))
+            
+            var cache = _nameCache.Value!;
+            if (!cache.TryGetValue(instanceName, out var value))
             {
                 value = new AsaName(name, instance, instanceName);
-                _nameCache.Value.Add(instanceName, value);
+                cache.Add(instanceName, value);
             }
-            constantNameCache[instanceName] = value;
+            _constantNameCache[instanceName] = value;
             return value;
         }
 
-        /// <summary>
-        /// Creates or retrieves an permanent AsaName with instance 0
-        /// </summary>
-        /// <param name="name"></param>
-        /// <returns></returns>
         public static AsaName ConstantPlain(string name) => Constant(name, 0);
+
+        public static bool TryFrom(string? name, [NotNullWhen(true)] out AsaName? result)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                result = null;
+                return false;
+            }
+
+            result = From(name);
+            return true;
+        }
+
+        public static bool TryFrom(string? name, int instance, [NotNullWhen(true)] out AsaName? result)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                result = null;
+                return false;
+            }
+
+            result = From(name, instance);
+            return true;
+        }
 
         #endregion
 
         public static void ClearCache()
         {
-            _nameCache = new ThreadLocal<IDictionary<string, AsaName>>() { Value = new Dictionary<string, AsaName>() };
+            _nameCache = new ThreadLocal<IDictionary<string, AsaName>>(() => new Dictionary<string, AsaName>());
         }
 
-        public override string ToString() => content;
+        public override string ToString() => _content;
 
+        #region Equality
 
-        #region Equality members
+        public override int GetHashCode() => _content.GetHashCode();
 
-        public override int GetHashCode() => content != null ? content.GetHashCode() : 0;
-
-        public override bool Equals(object other)
+        public override bool Equals(object? other)
         {
-            return !(other is null) && (ReferenceEquals(this, other) || Equals(other as AsaName));
+            return other is AsaName name && Equals(name);
         }
 
-        public bool Equals(AsaName other)
+        public bool Equals(AsaName? other)
         {
-            return !(other is null) && (ReferenceEquals(this, other) || string.Equals(content, other.content));
+            if (other is null) return false;
+            return ReferenceEquals(this, other) || string.Equals(_content, other._content);
         }
 
-        public static bool operator ==(AsaName left, AsaName right)
+        public static bool operator ==(AsaName? left, AsaName? right)
         {
             return Equals(left, right);
         }
 
-        public static bool operator !=(AsaName left, AsaName right)
+        public static bool operator !=(AsaName? left, AsaName? right)
         {
             return !Equals(left, right);
         }
 
         #endregion
 
-        #region Relational members
+        #region Comparison
 
-        public int CompareTo(AsaName other)
+        public int CompareTo(AsaName? other)
         {
-            return ReferenceEquals(this, other) ? 0 : (other is null ? 1 : string.Compare(content, other.content, StringComparison.Ordinal));
+            if (ReferenceEquals(this, other)) return 0;
+            if (other is null) return 1;
+            return string.Compare(_content, other._content, StringComparison.Ordinal);
         }
 
-        public int CompareTo(object obj)
+        public int CompareTo(object? obj)
         {
-            return (obj is null) ? 1 : (ReferenceEquals(this, obj) ? 0 : (obj is AsaName other ? CompareTo(other) : throw new ArgumentException($"Object must be of type {nameof(AsaName)}")));
+            if (obj is null) return 1;
+            if (ReferenceEquals(this, obj)) return 0;
+            return obj is AsaName other 
+                ? CompareTo(other) 
+                : throw new ArgumentException($"Object must be of type {nameof(AsaName)}");
         }
 
-        public static bool operator <(AsaName left, AsaName right)
+        public static bool operator <(AsaName? left, AsaName? right)
         {
             return Comparer<AsaName>.Default.Compare(left, right) < 0;
         }
 
-        public static bool operator >(AsaName left, AsaName right)
+        public static bool operator >(AsaName? left, AsaName? right)
         {
             return Comparer<AsaName>.Default.Compare(left, right) > 0;
         }
 
-        public static bool operator <=(AsaName left, AsaName right)
+        public static bool operator <=(AsaName? left, AsaName? right)
         {
             return Comparer<AsaName>.Default.Compare(left, right) <= 0;
         }
 
-        public static bool operator >=(AsaName left, AsaName right)
+        public static bool operator >=(AsaName? left, AsaName? right)
         {
             return Comparer<AsaName>.Default.Compare(left, right) >= 0;
         }

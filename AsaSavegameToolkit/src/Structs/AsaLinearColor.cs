@@ -1,23 +1,27 @@
-﻿namespace AsaSavegameToolkit.Structs
+namespace AsaSavegameToolkit.Structs
 {
-    public class AsaLinearColor
+    public readonly struct AsaLinearColor
     {
-        private readonly float r;
-        private readonly float g;
-        private readonly float b;
-        private readonly float a;
-
-        public float R => r;
-        public float G => g;
-        public float B => b;
-        public float A => a;
+        public float R { get; init; }
+        public float G { get; init; }
+        public float B { get; init; }
+        public float A { get; init; }
 
         public AsaLinearColor(AsaArchive archive)
         {
-            r = archive.ReadFloat();
-            g = archive.ReadFloat();
-            b = archive.ReadFloat();
-            a = archive.ReadFloat();
+            ArgumentNullException.ThrowIfNull(archive);
+            R = archive.ReadSingle();
+            G = archive.ReadSingle();
+            B = archive.ReadSingle();
+            A = archive.ReadSingle();
+        }
+
+        public AsaLinearColor(float r, float g, float b, float a)
+        {
+            R = r;
+            G = g;
+            B = b;
+            A = a;
         }
     }
 }

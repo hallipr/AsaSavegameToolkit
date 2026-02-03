@@ -40,7 +40,10 @@ public class DumpCommand : CommandDefinition
         catch (Exception ex)
         {
             logger.LogError($"Error dumping database: {ex.Message}");
-            logger.LogError(ex.StackTrace);
+            if (ex.StackTrace != null)
+            {
+                logger.LogError(ex.StackTrace);
+            }
             Environment.Exit(1);
         }
     }

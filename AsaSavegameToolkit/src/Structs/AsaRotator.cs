@@ -1,21 +1,24 @@
-﻿namespace AsaSavegameToolkit.Structs
+namespace AsaSavegameToolkit.Structs
 {
-    public class AsaRotator
+    public readonly struct AsaRotator
     {
-        private readonly double pitch;
-        private readonly double yaw;
-        private readonly double roll;
-
-        public double Pitch => pitch;
-        public double Yaw => yaw;
-        public double Roll => roll;
-
+        public double Pitch { get; init; }
+        public double Yaw { get; init; }
+        public double Roll { get; init; }
 
         public AsaRotator(AsaArchive archive)
         {
-            pitch = archive.ReadDouble();
-            yaw = archive.ReadDouble();
-            roll = archive.ReadDouble();
+            ArgumentNullException.ThrowIfNull(archive);
+            Pitch = archive.ReadDouble();
+            Yaw = archive.ReadDouble();
+            Roll = archive.ReadDouble();
+        }
+
+        public AsaRotator(double pitch, double yaw, double roll)
+        {
+            Pitch = pitch;
+            Yaw = yaw;
+            Roll = roll;
         }
     }
 }

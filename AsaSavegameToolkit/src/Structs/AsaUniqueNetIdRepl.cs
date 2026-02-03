@@ -1,20 +1,44 @@
-﻿namespace AsaSavegameToolkit.Structs
+using System.Diagnostics.CodeAnalysis;
+
+namespace AsaSavegameToolkit.Structs
 {
-    public class AsaUniqueNetIdRepl
+    public readonly struct AsaUniqueNetIdRepl
     {
-        private readonly byte unknown;
-        private readonly string valueType;
-        private readonly string value;
+        public string ValueType { get; init; }
+        public string Value { get; init; }
 
-        public string ValueType => valueType;
-        public string Value => value;
-
-        public AsaUniqueNetIdRepl(AsaArchive archive)
+        private AsaUniqueNetIdRepl(string valueType, string value)
         {
-            unknown = archive.ReadByte();
-            valueType = archive.ReadString();
-            int length = archive.ReadByte();
-            value = Convert.ToHexString(archive.ReadBytes(length));
+            ValueType = valueType;
+            Value = value;
+        }
+
+        public static bool TryRead(AsaArchive archive, [NotNullWhen(true)] out AsaUniqueNetIdRepl? result)
+        {
+            ArgumentNullException.ThrowIfNull(archive);
+
+            try
+            {
+                byte unknown = archive.ReadByte();
+                
+                if (!archive.TryReadString(out var valueType))
+                {
+                    result = null;
+                    return false;
+                }
+
+                int length = archive.ReadByte();
+                byte[] bytes = archive.ReadBytes(length);
+                string value = Convert.ToHexString(bytes);
+
+                result = new AsaUniqueNetIdRepl(valueType, value);
+                return true;
+            }
+            catch
+            {
+                result = null;
+                return false;
+            }
         }
     }
 }
