@@ -7,32 +7,28 @@ This repo started as a direct copy of parts of the https://github.com/miragedmuk
 ## Features
 
 - C# library for reading ARK: Survival Ascended save files
-- Command-line interface (CLI) for analyzing saves
 - Support for save version 14+ (UE5.5 structure)
 - Parallel processing for improved performance
-- Cross-platform support (Windows, Linux, macOS)
+- Cross-platform support
 
 ## Building
 
 ```bash
 # Restore dependencies
-dotnet restore AsaSavegameToolkit.slnx
+dotnet restore
 
 # Build library
-dotnet build AsaSavegameToolkit/src/AsaSavegameToolkit.csproj --configuration Release
-
-# Build CLI
-dotnet build AsaSavCli/src/AsaSavCli.csproj --configuration Release
+dotnet build
 
 # Run tests
-dotnet test AsaSavegameToolkit/tests/AsaSavegameToolkit.Tests/AsaSavegameToolkit.Tests.csproj
+dotnet test
 ```
 
 ## CI/CD
 
 The project uses GitHub Actions for continuous integration:
-- **Build and Test**: Builds and tests on Ubuntu, Windows, and macOS
+- **Build and Test**: Builds and tests on Ubuntu
 - **Code Coverage**: Generates coverage reports
-- **Release Artifacts**: Creates platform-specific builds for the CLI tool
+- **Release Artifacts**: Creates nuget packages that will evenually be released to nuget.org
 
 See [.github/workflows/build-and-test.yml](.github/workflows/build-and-test.yml) for details.
