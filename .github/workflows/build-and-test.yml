@@ -1,0 +1,124 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build and Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore AsaSavegameToolkit.slnx
+
+    - name: Build library
+      run: dotnet build AsaSavegameToolkit/src/AsaSavegameToolkit.csproj --configuration Release --no-restore
+
+    - name: Build CLI
+      run: dotnet build AsaSavCli/src/AsaSavCli.csproj --configuration Release --no-restore
+
+    - name: Run tests
+      run: dotnet test AsaSavegameToolkit/tests/AsaSavegameToolkit.Tests/AsaSavegameToolkit.Tests.csproj --configuration Release --no-build --verbosity normal --logger "trx;LogFileName=test-results.trx"
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.os }}
+        path: '**/TestResults/*.trx'
+        retention-days: 30
+
+    - name: Test CLI build
+      run: dotnet AsaSavCli/src/bin/Release/net10.0/asasav.dll --version
+      if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
+
+    - name: Test CLI build (Windows)
+      run: dotnet AsaSavCli/src/bin/Release/net10.0/asasav.dll --version
+      shell: pwsh
+      if: matrix.os == 'windows-latest'
+
+  build-artifacts:
+    name: Build Release Artifacts
+    runs-on: windows-latest
+    needs: build-and-test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore AsaSavegameToolkit.slnx
+
+    - name: Build library for release
+      run: dotnet build AsaSavegameToolkit/src/AsaSavegameToolkit.csproj --configuration Release --no-restore
+
+    - name: Build CLI for release
+      run: dotnet build AsaSavCli/src/AsaSavCli.csproj --configuration Release --no-restore
+
+    - name: Publish CLI (Windows x64)
+      run: dotnet publish AsaSavCli/src/AsaSavCli.csproj -c Release -r win-x64 --self-contained false -o artifacts/win-x64
+
+    - name: Publish CLI (Linux x64)
+      run: dotnet publish AsaSavCli/src/AsaSavCli.csproj -c Release -r linux-x64 --self-contained false -o artifacts/linux-x64
+
+    - name: Publish CLI (macOS x64)
+      run: dotnet publish AsaSavCli/src/AsaSavCli.csproj -c Release -r osx-x64 --self-contained false -o artifacts/osx-x64
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-builds
+        path: artifacts/
+        retention-days: 90
+
+  code-coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore AsaSavegameToolkit.slnx
+
+    - name: Build
+      run: dotnet build AsaSavegameToolkit.slnx --configuration Debug --no-restore
+
+    - name: Run tests with coverage
+      run: dotnet test AsaSavegameToolkit/tests/AsaSavegameToolkit.Tests/AsaSavegameToolkit.Tests.csproj --configuration Debug --no-build --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage
+
+    - name: Upload coverage reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: code-coverage
+        path: coverage/**/coverage.cobertura.xml
+        retention-days: 30
