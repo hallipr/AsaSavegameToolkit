@@ -316,7 +316,7 @@ namespace AsaSavegameToolkit
                 try
                 {
                     var keyString = objectData.Key.ToString();
-                    var debugSettings = GetDerivedDebugSettings($"profiles/{keyString[..2]}");
+                    var debugSettings = GetDerivedDebugSettings($"game/{keyString[..2]}");
 
                     if (debugSettings.HasOutput)
                     {

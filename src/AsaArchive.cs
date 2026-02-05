@@ -223,52 +223,52 @@ namespace AsaSavegameToolkit
         {
             var sb = new StringBuilder();
 
-            // Sort sections by offset
-            var sortedSections = SectionsRead.OrderBy(s => s.Offset).ToList();
-            var sortedSkipped = SectionsSkipped.OrderBy(s => s.Offset).ToList();
+            // Sort sections by offset, then by length (descending) for proper nesting
+            var sortedParsed = SectionsRead.OrderBy(s => s.Offset).ThenByDescending(s => s.Length).ToList();
+            var sortedSkipped = SectionsSkipped.OrderBy(s => s.Offset).ThenByDescending(s => s.Length).ToList();
 
-            // Build a merged list of all sections for sequential processing
-            var allSections = new List<(long offset, long length, string description, bool isSkipped)>();
-            foreach (var section in sortedSections)
-            {
-                allSections.Add((section.Offset, section.Length, section.Description, false));
-            }
-            foreach (var section in sortedSkipped)
-            {
-                allSections.Add((section.Offset, section.Length, section.Reason, true));
-            }
-            allSections = allSections.OrderBy(s => s.offset).ThenByDescending(x => x.length).ToList();
+            // Pre-calculate parent-child relationships for parsed sections
+            var parentMap = BuildParentMap(sortedParsed);
+            
+            // Pre-read and cache all section data
+            var sectionData = PreloadSectionData(sortedParsed);
 
             // Add title and file info
             sb.AppendLine($"# {Path.GetFileName(FileName)}");
             sb.AppendLine();
             sb.AppendLine($"File Size: {_stream.Length:N0} bytes (0x{_stream.Length:X})");
-            sb.AppendLine($"Sections Read: {sortedSections.Count}");
+            sb.AppendLine($"Sections Read: {sortedParsed.Count}");
             sb.AppendLine($"Sections Skipped: {sortedSkipped.Count}");
             sb.AppendLine();
 
-            // Generate hex dump with annotations
+            // Merge and process all sections linearly
+            var allSections = MergeSections(sortedParsed, sortedSkipped);
+            
             long currentOffset = 0;
-
-            foreach (var (offset, length, description, isSkipped) in allSections)
+            
+            foreach (var section in allSections)
             {
                 // Add gap if there is one
-                if (currentOffset < offset)
+                if (currentOffset < section.Offset)
                 {
-                    AddUnknownSection(sb, currentOffset, offset - currentOffset);
-                    currentOffset = offset;
+                    AddUnknownSection(sb, currentOffset, section.Offset - currentOffset);
+                    currentOffset = section.Offset;
                 }
 
-                // Add section header with offset and size info
-                sb.AppendLine($"## {description}");
-                sb.AppendLine();
-                sb.AppendLine($"Offset: 0x{offset:X} | Size: {length} bytes (0x{length:X})");
-                sb.AppendLine();
-
-                // Add hex dump with column headers
-                AddHexDump(sb, offset, length);
-
-                currentOffset = offset + length;
+                if (section.IsTable)
+                {
+                    // Output table for consecutive parsed sections
+                    AddSectionsTable(sb, section.ParsedSections!, parentMap, sectionData);
+                    currentOffset = section.Offset + section.Length;
+                }
+                else
+                {
+                    // Output skipped section with hex dump
+                    sb.AppendLine($"## skipped ({section.Reason}) - Offset: {section.Offset:X6} - Length {section.Length}");
+                    sb.AppendLine();
+                    AddHexDump(sb, section.Offset, section.Length);
+                    currentOffset = section.Offset + section.Length;
+                }
             }
 
             // Add any remaining unknown data
@@ -278,6 +278,233 @@ namespace AsaSavegameToolkit
             }
 
             return sb.ToString();
+        }
+
+        private Dictionary<ParsedSection, bool> BuildParentMap(List<ParsedSection> sections)
+        {
+            var parentMap = new Dictionary<ParsedSection, bool>();
+            
+            for (int i = 0; i < sections.Count; i++)
+            {
+                var section = sections[i];
+                bool isParent = false;
+                
+                // Only check following sections since list is sorted
+                for (int j = i + 1; j < sections.Count; j++)
+                {
+                    var other = sections[j];
+                    
+                    // If other section starts after this one ends, no more children possible
+                    if (other.Offset >= section.Offset + section.Length)
+                        break;
+                    
+                    // Check if other is contained within section
+                    if (other.Offset >= section.Offset && 
+                        other.Offset + other.Length <= section.Offset + section.Length)
+                    {
+                        isParent = true;
+                        break;
+                    }
+                }
+                
+                parentMap[section] = isParent;
+            }
+            
+            return parentMap;
+        }
+
+        private Dictionary<ParsedSection, byte[]> PreloadSectionData(List<ParsedSection> sections)
+        {
+            var data = new Dictionary<ParsedSection, byte[]>();
+            
+            foreach (var section in sections)
+            {
+                // Only cache small sections (up to 64 bytes) to avoid memory issues
+                if (section.Length <= 64)
+                {
+                    _stream.Position = section.Offset;
+                    byte[] buffer = new byte[section.Length];
+                    _stream.Read(buffer, 0, (int)section.Length);
+                    data[section] = buffer;
+                }
+            }
+            
+            return data;
+        }
+
+        private List<MergedSection> MergeSections(List<ParsedSection> parsed, List<SkippedSection> skipped)
+        {
+            var result = new List<MergedSection>();
+            int parsedIdx = 0;
+            int skippedIdx = 0;
+
+            while (parsedIdx < parsed.Count || skippedIdx < skipped.Count)
+            {
+                ParsedSection? nextParsed = parsedIdx < parsed.Count ? parsed[parsedIdx] : null;
+                SkippedSection? nextSkipped = skippedIdx < skipped.Count ? skipped[skippedIdx] : null;
+
+                if (nextParsed != null && (nextSkipped == null || nextParsed.Offset <= nextSkipped.Offset))
+                {
+                    // Collect consecutive parsed sections into a table group
+                    var tableSections = new List<ParsedSection>();
+                    long tableStart = nextParsed.Offset;
+                    long tableEnd = tableStart;
+
+                    while (parsedIdx < parsed.Count)
+                    {
+                        var section = parsed[parsedIdx];
+                        
+                        // Check if this section overlaps or is adjacent to the current group
+                        if (section.Offset <= tableEnd)
+                        {
+                            tableSections.Add(section);
+                            tableEnd = Math.Max(tableEnd, section.Offset + section.Length);
+                            parsedIdx++;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+
+                    result.Add(new MergedSection
+                    {
+                        Offset = tableStart,
+                        Length = tableEnd - tableStart,
+                        IsTable = true,
+                        ParsedSections = tableSections
+                    });
+                }
+                else if (nextSkipped != null)
+                {
+                    result.Add(new MergedSection
+                    {
+                        Offset = nextSkipped.Offset,
+                        Length = nextSkipped.Length,
+                        IsTable = false,
+                        Reason = nextSkipped.Reason
+                    });
+                    skippedIdx++;
+                }
+            }
+
+            return result;
+        }
+
+        private void AddSectionsTable(StringBuilder sb, List<ParsedSection> sections, 
+            Dictionary<ParsedSection, bool> parentMap, Dictionary<ParsedSection, byte[]> sectionData)
+        {
+            // Output table header
+            sb.AppendLine("| offset | type |         hex |           parsed | description             |");
+            sb.AppendLine("|-------:|------|------------:|-----------------:|-------------------------|");
+
+            foreach (var section in sections)
+            {
+                bool isParent = parentMap[section];
+                
+                if (isParent)
+                {
+                    // Parent section - description only
+                    sb.AppendLine($"| {section.Offset:X6} |      |             |                  | {section.Description,-24}|");
+                }
+                else
+                {
+                    // Leaf section - full details
+                    string type = InferType(section.Length);
+                    string hex = GetHexString(section, sectionData);
+                    string parsed = ParseValue(section, type, sectionData);
+                    
+                    sb.AppendLine($"| {section.Offset:X6} | {type,-4} | {hex,11} | {parsed,16} | {section.Description,-24}|");
+                }
+            }
+
+            sb.AppendLine();
+        }
+
+        private class MergedSection
+        {
+            public long Offset { get; init; }
+            public long Length { get; init; }
+            public bool IsTable { get; init; }
+            public List<ParsedSection>? ParsedSections { get; init; }
+            public string? Reason { get; init; }
+        }
+
+        private string InferType(long length)
+        {
+            return length switch
+            {
+                1 => "b1",
+                2 => "s2",
+                4 => "s4",
+                8 => "s8",
+                _ => "??"
+            };
+        }
+
+        private string GetHexString(ParsedSection section, Dictionary<ParsedSection, byte[]> sectionData)
+        {
+            byte[] data;
+            
+            if (sectionData.TryGetValue(section, out var cached))
+            {
+                data = cached;
+            }
+            else
+            {
+                _stream.Position = section.Offset;
+                int readLength = (int)Math.Min(section.Length, 64);
+                data = new byte[readLength];
+                _stream.Read(data, 0, readLength);
+            }
+            
+            int maxBytes = 8;
+            if (data.Length <= maxBytes)
+            {
+                return string.Join(" ", data.Select(b => $"{b:X2}"));
+            }
+            else
+            {
+                // Show first 3 and last 3 bytes with ellipsis
+                string startHex = string.Join(" ", data.Take(3).Select(b => $"{b:X2}"));
+                string endHex = string.Join(" ", data.TakeLast(3).Select(b => $"{b:X2}"));
+                return $"{startHex} .. {endHex}";
+            }
+        }
+
+        private string ParseValue(ParsedSection section, string type, Dictionary<ParsedSection, byte[]> sectionData)
+        {
+            try
+            {
+                byte[] data;
+                
+                if (sectionData.TryGetValue(section, out var cached))
+                {
+                    data = cached;
+                }
+                else
+                {
+                    _stream.Position = section.Offset;
+                    data = new byte[section.Length];
+                    _stream.Read(data, 0, (int)section.Length);
+                }
+                
+                return type switch
+                {
+                    "b1" => (data[0] != 0).ToString().ToLower(),
+                    "s2" => BitConverter.ToInt16(data, 0).ToString(),
+                    "s4" => BitConverter.ToInt32(data, 0).ToString(),
+                    "u4" => BitConverter.ToUInt32(data, 0).ToString(),
+                    "s8" => BitConverter.ToInt64(data, 0).ToString(),
+                    "f4" => BitConverter.ToSingle(data, 0).ToString("F2"),
+                    "f8" => BitConverter.ToDouble(data, 0).ToString("F2"),
+                    _ => ""
+                };
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         private void AddHexDump(StringBuilder sb, long offset, long length)
@@ -337,9 +564,7 @@ namespace AsaSavegameToolkit
 
         private void AddUnknownSection(StringBuilder sb, long offset, long length)
         {
-            sb.AppendLine("## Unknown");
-            sb.AppendLine();
-            sb.AppendLine($"Offset: 0x{offset:X} | Size: {length} bytes (0x{length:X})");
+            sb.AppendLine($"## Unknown - Offset: {offset:X6} - Length {length}");
             sb.AppendLine();
 
             AddHexDump(sb, offset, length);
