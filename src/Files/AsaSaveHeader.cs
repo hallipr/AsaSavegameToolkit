@@ -1,6 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
-
-namespace AsaSavegameToolkit.Files;
+﻿namespace AsaSavegameToolkit.Files;
 
 public class AsaSaveHeader
 {
@@ -63,7 +61,7 @@ public class AsaSaveHeader
             {
                 dataFiles.Add(nameString);
             }
-            _ = archive.ReadInt32("terminator"); // record terminator
+            archive.ReadInt32("terminator"); // record terminator
         }
 
         return dataFiles;

@@ -3,7 +3,7 @@ namespace AsaSavegameToolkit;
 
 public class FieldReadMap
 {
-    public FieldReadMap(long length, List<ReadSection> sectionsRead, List<SkippedSection> sectionsSkipped)
+    public FieldReadMap(long length, List<ParsedSection> sectionsRead, List<SkippedSection> sectionsSkipped)
     {
         Length = length;
         SectionsRead = sectionsRead;
@@ -12,7 +12,7 @@ public class FieldReadMap
 
     public long Length { get; }
 
-    public List<ReadSection> SectionsRead
+    public List<ParsedSection> SectionsRead
     {
         get;
         set => field = [.. value.OrderBy(x => x.Offset).ThenByDescending(x => x.Length)];
@@ -30,7 +30,7 @@ public class FieldReadMap
 /// </summary>
 public record SkippedSection
 {
-    public SkippedSection(long offset, long length, string? reason)
+    public SkippedSection(long offset, long length, string reason)
     {
         Offset = offset;
         Length = length;
@@ -39,34 +39,24 @@ public record SkippedSection
 
     public long Offset { get; set; }
     public long Length { get; set; }
-    public string? Reason { get; set; }
+    public string Reason { get; set; }
 }
 
 /// <summary>
 /// Represents a section of the file that was read
 /// </summary>
-public record ReadSection
+public record ParsedSection
 {
     public long Offset { get; init; }
     public long Length { get; init; }
-    public string Type { get; init; }
-    
-    /// <summary>
-    /// Indicates parser completeness for this section.
-    /// True = Section fully parsed and all bytes understood
-    /// False = Section identified but parser is incomplete/buggy (some bytes not understood)
-    /// This is a declarative statement about implementation quality, not computed from offsets.
-    /// Example: "bytes 1000-5000 are the NameTable (Complete=false means parser needs work)"
-    /// </summary>
-    public bool Complete { get; }
+    public string Description { get; init; }
 
-    public ReadSection(long offset, long length, string type, bool complete)
+    public ParsedSection(long offset, long length, string description)
     {
         Offset = offset;
         Length = length;
-        Type = type;
-        Complete = complete;
+        Description = description;
     }
 
-    public override string ToString() => $"[{Offset:X8}-{Offset + Length - 1:X8}] {Type}" + (Complete ? "" : " (incomplete)");
+    public override string ToString() => $"[{Offset:X8}-{Offset + Length - 1:X8}] {Description}";
 }

@@ -5,12 +5,12 @@ namespace AsaSavegameToolkit.Types
 {
     public class AsaObjectReference
     {
-        private const int TypeId = 0;
-        private const int TypePath = 1;
-        private const int TypePathNoType = 2;
-        private const int TypeName = 3;
-        private const int TypeUuid = 4;
-        private const int TypeUnknown = -1;
+        private const int _typeUnknown = -1;
+        private const int _typeId = 0;
+        private const int _typePath = 1;
+        private const int _typePathNoType = 2;
+        private const int _typeName = 3;
+        private const int _typeUuid = 4;
 
         private readonly int _type;
         private readonly object _value;
@@ -20,13 +20,13 @@ namespace AsaSavegameToolkit.Types
         public AsaObjectReference(string objectValue)
         {
             ArgumentNullException.ThrowIfNull(objectValue);
-            _type = TypePath;
+            _type = _typePath;
             _value = objectValue;
         }
 
         public AsaObjectReference(Guid guid)
         {
-            _type = TypeUuid;
+            _type = _typeUuid;
             _value = guid.ToString();
         }
 
@@ -49,14 +49,14 @@ namespace AsaSavegameToolkit.Types
                     {
                         if (archive.TryReadName("name", out var name))
                         {
-                            result = new AsaObjectReference(TypePath, name.ToString());
+                            result = new AsaObjectReference(_typePath, name.ToString());
                             return true;
                         }
                     }
                     else
                     {
                         var guid = GuidExtensions.ToGuid(archive.ReadBytes(16, "guid"));
-                        result = new AsaObjectReference(TypeUuid, guid);
+                        result = new AsaObjectReference(_typeUuid, guid);
                         return true;
                     }
 
@@ -68,20 +68,20 @@ namespace AsaSavegameToolkit.Types
 
                 if (objectType == -1)
                 {
-                    result = new AsaObjectReference(TypeUnknown, string.Empty);
+                    result = new AsaObjectReference(_typeUnknown, string.Empty);
                     return true;
                 }
                 else if (objectType == 0)
                 {
                     int id = archive.ReadInt32("id");
-                    result = new AsaObjectReference(TypeId, id);
+                    result = new AsaObjectReference(_typeId, id);
                     return true;
                 }
                 else if (objectType == 1)
                 {
                     if (archive.TryReadString("path", out var path))
                     {
-                        result = new AsaObjectReference(TypePath, path);
+                        result = new AsaObjectReference(_typePath, path);
                         return true;
                     }
                 }
@@ -90,7 +90,7 @@ namespace AsaSavegameToolkit.Types
                     archive.SkipBytes(-4);
                     if (archive.TryReadString("path no type", out var path))
                     {
-                        result = new AsaObjectReference(TypePathNoType, path);
+                        result = new AsaObjectReference(_typePathNoType, path);
                         return true;
                     }
                 }

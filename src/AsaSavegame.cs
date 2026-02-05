@@ -1,9 +1,5 @@
 using System.Collections.Concurrent;
-using System.Data.SqlTypes;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
-using System.Reflection.PortableExecutable;
 
 using AsaSavegameToolkit.Extensions;
 using AsaSavegameToolkit.Files;
@@ -28,9 +24,11 @@ namespace AsaSavegameToolkit
         private readonly string _saveFile;
         private readonly string _saveDirectory;
         private readonly ILogger _logger;
-        private readonly string? _debugOutputPath;
+        private readonly DebugSettings _debugSettings;
 
-        public AsaSavegame(string saveFile, ILogger? logger = default, string? debugOutputPath = default)
+        public AsaSavegame(string saveFile, ILogger? logger = default) : this(saveFile, logger ?? NullLogger.Instance, DebugSettings.None) { }
+
+        public AsaSavegame(string saveFile, ILogger logger, DebugSettings debugSettings)
         {
             ArgumentException.ThrowIfNullOrEmpty(saveFile);
 
@@ -42,8 +40,8 @@ namespace AsaSavegameToolkit
             _saveFile = saveFile;
             _saveDirectory = Path.GetDirectoryName(saveFile) ?? throw new Exception($"Unable to get directory name for path {saveFile}");
 
-            _logger = logger ?? NullLogger.Instance;
-            _debugOutputPath = debugOutputPath;
+            _logger = logger;
+            _debugSettings = debugSettings ?? DebugSettings.None;
         }
 
         public short SaveVersion { get; private set; }
@@ -52,6 +50,7 @@ namespace AsaSavegameToolkit
         public AsaGameObject[] Objects => [.. _gameObjects.Values];
         public AsaTribe[] Tribes => [.. _tribeData];
         public AsaProfile[] Profiles => [.. _profileData];
+        public ConcurrentDictionary<string, (ParsedSection[] Parsed, SkippedSection[] Skipped)> ParserCoverage { get; } = [];
 
         public bool TryGetActorLocation(Guid id, [NotNullWhen(true)] out AsaLocation? location)
         {
@@ -183,23 +182,14 @@ namespace AsaSavegameToolkit
         {
             try
             {
-                string? outputDirectory = null;
-                if (!string.IsNullOrEmpty(_debugOutputPath))
-                {
-                    outputDirectory = Path.Join(_debugOutputPath, "tribes");
-                    if (!Directory.Exists(outputDirectory))
-                    {
-                        Directory.CreateDirectory(outputDirectory);
-                    }
-                }
-                
+                var debugSettings = GetDerivedDebugSettings("tribes");
                 var tribeFiles = Directory.EnumerateFiles(_saveDirectory, "*.arktribe");
                 var tribeBag = new ConcurrentBag<AsaTribe>();
 
                 Parallel.ForEach(tribeFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, tribeFile =>
                 {
                     using var ms = new MemoryStream(File.ReadAllBytes(tribeFile));
-                    using var archive = new AsaArchive(ms, outputDirectory, tribeFile);
+                    using var archive = new AsaArchive(ms, tribeFile, debugSettings);
                     archive.NameTable = _nameTable;
 
                     if (AsaTribe.TryRead(archive, usePropertiesOffset: true, out var tribe))
@@ -208,14 +198,25 @@ namespace AsaSavegameToolkit
                         tribeBag.Add(tribe);
                     }
 
-                    if (outputDirectory != null)
+                    if (debugSettings.HasOutput)
                     {
-                        var tribeFilePath = Path.Join(outputDirectory, Path.GetFileName(tribeFile));
+                        var tribeFilePath = Path.Join(debugSettings.OutputDirectory, Path.GetFileName(tribeFile));
                         File.Copy(tribeFile, tribeFilePath, overwrite: true);
 
                         if (tribe != null) {
                             DebugOutput.WriteSerializedJson(Path.ChangeExtension(tribeFilePath, ".json"), tribe);
                         }
+
+                        if (debugSettings.TrackCoverage)
+                        {
+                            var report = archive.GenerageCoverageReport();
+                            File.WriteAllText(Path.ChangeExtension(tribeFilePath, "_coverage.md"), report);
+                        }
+                    }
+
+                    if (debugSettings.TrackCoverage)
+                    {
+                        ParserCoverage.TryAdd(archive.FileName, (archive.SectionsRead.ToArray(), archive.SectionsSkipped.ToArray()));
                     }
                 });
 
@@ -232,38 +233,40 @@ namespace AsaSavegameToolkit
         {
             try
             {
-                string? outputDirectory = null;
-                if (!string.IsNullOrEmpty(_debugOutputPath))
-                {
-                    outputDirectory = Path.Join(_debugOutputPath, "profiles");
-                    if (!Directory.Exists(outputDirectory))
-                    {
-                        Directory.CreateDirectory(outputDirectory);
-                    }
-                }
-                
+                var debugSettings = GetDerivedDebugSettings("profiles");
                 var profileFiles = Directory.EnumerateFiles(_saveDirectory, "*.arkprofile");
                 var profileBag = new ConcurrentBag<AsaProfile>();
 
                 Parallel.ForEach(profileFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, profileFile =>
                 {
                     using var ms = new MemoryStream(File.ReadAllBytes(profileFile));
-                    using var archive = new AsaArchive(ms, outputDirectory, profileFile);
+                    using var archive = new AsaArchive(ms, profileFile, debugSettings);
 
                     if (AsaProfile.TryRead(archive, out var profile))
                     {
                         profileBag.Add(profile);
                     }
 
-                    if (outputDirectory != null)
+                    if (debugSettings.HasOutput)
                     {
-                        var profileFilePath = Path.Join(outputDirectory, Path.GetFileName(profileFile));
+                        var profileFilePath = Path.Join(debugSettings.OutputDirectory, Path.GetFileName(profileFile));
                         File.Copy(profileFile, profileFilePath, overwrite: true);
 
                         if (profile != null)
                         {
                             DebugOutput.WriteSerializedJson(Path.ChangeExtension(profileFilePath, ".json"), profile);
                         }
+
+                        if (debugSettings.TrackCoverage)
+                        {
+                            var report = archive.GenerageCoverageReport();
+                            File.WriteAllText(Path.ChangeExtension(profileFilePath, "_coverage.md"), report);
+                        }
+                    }
+
+                    if (debugSettings.TrackCoverage)
+                    {
+                        ParserCoverage.TryAdd(archive.FileName, (archive.SectionsRead.ToArray(), archive.SectionsSkipped.ToArray()));
                     }
                 });
 
@@ -313,19 +316,15 @@ namespace AsaSavegameToolkit
                 try
                 {
                     var keyString = objectData.Key.ToString();
-                    var outputDirectory = _debugOutputPath != null ? Path.Join(_debugOutputPath, "game", keyString[..2]) : null;
+                    var debugSettings = GetDerivedDebugSettings($"profiles/{keyString[..2]}");
 
-                    if (outputDirectory != null)
+                    if (debugSettings.HasOutput)
                     {
-                        if (!Directory.Exists(outputDirectory))
-                        {
-                            Directory.CreateDirectory(outputDirectory);
-                        }
-                        File.WriteAllBytes(Path.Join(outputDirectory, $"{keyString}.bin"), objectData.Value);
+                        File.WriteAllBytes(Path.Join(debugSettings.OutputDirectory, $"{keyString}.bin"), objectData.Value);
                     }
 
                     using var ms = new MemoryStream(objectData.Value);
-                    using var archive = new AsaArchive(ms, _debugOutputPath, keyString);
+                    using var archive = new AsaArchive(ms, keyString, debugSettings);
 
                     archive.NameTable = _nameTable;
                     archive.SaveVersion = SaveVersion;
@@ -345,9 +344,20 @@ namespace AsaSavegameToolkit
                         objectBag.TryAdd(gameObject.Guid, gameObject);
 
 
-                        if (outputDirectory != null)
+                        if (debugSettings.HasOutput)
                         {
-                            DebugOutput.WriteSerializedJson(Path.Join(outputDirectory, $"{keyString}.json"), gameObject);
+                            DebugOutput.WriteSerializedJson(Path.Join(debugSettings.OutputDirectory, $"{keyString}.json"), gameObject);
+                        }
+                    }
+
+                    if (debugSettings.TrackCoverage)
+                    {
+                        ParserCoverage.TryAdd(archive.FileName, (archive.SectionsRead.ToArray(), archive.SectionsSkipped.ToArray()));
+
+                        if (debugSettings.HasOutput)
+                        {
+                            var report = archive.GenerageCoverageReport();
+                            File.WriteAllText(Path.Join(debugSettings.OutputDirectory, $"{keyString}_coverage.md"), report);
                         }
                     }
                 }
@@ -367,36 +377,39 @@ namespace AsaSavegameToolkit
 
         private void ProcessCustomTableRows(SqliteConnection connection, string key, Func<int, AsaArchive, object?> processSqlBytes)
         {
+            var debugSettings = GetDerivedDebugSettings("custom");
             using var command = new SqliteCommand($"SELECT value FROM custom WHERE key = '{key}'", connection);
             using var reader = command.ExecuteReader();
-            string? outputDirectory = null;
-            if (!string.IsNullOrEmpty(_debugOutputPath))
-            {
-                outputDirectory = Path.Join(_debugOutputPath, "custom");
-                if (!Directory.Exists(outputDirectory))
-                {
-                    Directory.CreateDirectory(outputDirectory);
-                }
-            }
 
             for (var row = 0; reader.Read(); row++)
             {
                 if (TryGetSqlBytes(reader, 0, out var sqlBytes))
                 {
+                    if (debugSettings.HasOutput)
+                    {
+                        File.WriteAllBytes(Path.Join(debugSettings.OutputDirectory, $"{key}_{row}.bin"), sqlBytes);
+                    } 
+                    
                     using var stream = new MemoryStream(sqlBytes);
-                    using var archive = new AsaArchive(stream, outputDirectory, $"{key}_{row}");
+                    using var archive = new AsaArchive(stream, $"{key}_{row}", debugSettings);
                     archive.NameTable = _nameTable;
 
                     var result = processSqlBytes(row, archive);
 
-                    if (outputDirectory != null)
+                    if (debugSettings.HasOutput && result != null)
                     {
-                        if (result != null)
-                        {
-                            DebugOutput.WriteSerializedJson(Path.Join(outputDirectory, $"{key}_{row}.json"), result);
-                        }
+                        DebugOutput.WriteSerializedJson(Path.Join(debugSettings.OutputDirectory, $"{key}_{row}.json"), result);
+                    }
 
-                        File.WriteAllBytes(Path.Join(outputDirectory, $"{key}_{row}.bin"), sqlBytes);
+                    if (debugSettings.TrackCoverage)
+                    {
+                        ParserCoverage.TryAdd(archive.FileName, (archive.SectionsRead.ToArray(), archive.SectionsSkipped.ToArray()));
+
+                        if (debugSettings.HasOutput)
+                        {
+                            var report = archive.GenerageCoverageReport();
+                            File.WriteAllText(Path.Join(debugSettings.OutputDirectory, $"{key}_{row}_coverage.md"), report);
+                        }
                     }
                 }
             }
@@ -426,6 +439,26 @@ namespace AsaSavegameToolkit
                 bytes = null;
                 return false;
             }
+        }
+
+        private DebugSettings GetDerivedDebugSettings(string subdirectory)
+        {
+            if (_debugSettings == DebugSettings.None)
+            {
+                return DebugSettings.None;
+            }
+
+            if (_debugSettings.HasOutput)
+            {
+                var outputDirectory = Path.Join(_debugSettings.OutputDirectory, subdirectory);
+                var settings = new DebugSettings(outputDirectory, _debugSettings.TrackCoverage);
+
+                settings.CreateOutputDirectory();
+
+                return settings;
+            }
+
+            return new DebugSettings(null, _debugSettings.TrackCoverage);
         }
     }
 }

@@ -1,5 +1,4 @@
-﻿using FracturedJson;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 
 namespace AsaSavegameToolkit.Tests;
 
@@ -18,16 +17,15 @@ public sealed class SaveLoadTests
 
         string outputPath = Path.Combine(settings.OutputDirectory, "Ragnarok_WP");
 
-        //string saveFilePath = Path.Combine("assets", "GreenflatMap1.ark");
-
         if(Directory.Exists(outputPath))
         {
             Directory.Delete(outputPath, true);
         }
 
         var logger = new TestLogger(TestContext);
-
-        AsaSavegame savegame = new(saveFilePath, logger, outputPath);
+        var debugSettings = new DebugSettings(outputPath, trackCoverage: true);
+        
+        AsaSavegame savegame = new(saveFilePath, logger, debugSettings);
 
         savegame.Read();
 
@@ -39,7 +37,28 @@ public sealed class SaveLoadTests
     [TestMethod]
     public void CanProcessGreenflatMapSave()
     {
-        // GreenFlatMap is a small featureless map that generates relatively small saves
+        TestSettings settings = TestSettings.Load();
+
+        string saveFilePath = Path.Combine(settings.AssetsDirectory, "GreenflatMap1.ark");
+        Assert.IsTrue(File.Exists(saveFilePath), $"Save file not found: {saveFilePath}");
+
+        string outputPath = Path.Combine(settings.OutputDirectory, "GreenflatMap1");
+
+        if (Directory.Exists(outputPath))
+        {
+            Directory.Delete(outputPath, true);
+        }
+
+        var logger = new TestLogger(TestContext);
+        var debugSettings = new DebugSettings(outputPath, trackCoverage: true);
+
+        AsaSavegame savegame = new(saveFilePath, logger, debugSettings);
+
+        savegame.Read();
+
+        Assert.IsNotNull(savegame);
+        Assert.IsGreaterThan(0, savegame.GameTime, "GameTime should be greater than 0");
+        Assert.IsNotNull(savegame.Objects, "Objects should not be null");
     }
 
     public class TestLogger(TestContext testContext) : ILogger
