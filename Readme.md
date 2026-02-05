@@ -1,6 +1,6 @@
 # AsaSavegameToolkit
 
-![Build and Test](https://github.com/your-username/AsaSavegameToolkit/workflows/Build%20and%20Test/badge.svg)
+[![Build and Test](https://github.com/hallipr/AsaSavegameToolkit/workflows/Build%20and%20Test/badge.svg)](https://github.com/hallipr/AsaSavegameToolkit/actions/workflows/build-and-test.yml)
 
 This repo started as a direct copy of parts of the https://github.com/miragedmuk/ASV repo. `ASV` uses `ArkSavegameToolkit` from https://github.com/DodoCooker/ArkSavegameToolkit and `ArkSavegameToolkit` is a .NET port of https://github.com/Qowyn/ark-savegame-toolkit
 
