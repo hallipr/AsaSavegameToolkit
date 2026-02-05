@@ -188,8 +188,8 @@ namespace AsaSavegameToolkit
 
                 Parallel.ForEach(tribeFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, tribeFile =>
                 {
-                    using var ms = new MemoryStream(File.ReadAllBytes(tribeFile));
-                    using var archive = new AsaArchive(ms, tribeFile, debugSettings);
+                    using var stream = new MemoryStream(File.ReadAllBytes(tribeFile));
+                    using var archive = new AsaArchive(stream, tribeFile, debugSettings);
                     archive.NameTable = _nameTable;
 
                     if (AsaTribe.TryRead(archive, usePropertiesOffset: true, out var tribe))
@@ -239,8 +239,8 @@ namespace AsaSavegameToolkit
 
                 Parallel.ForEach(profileFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, profileFile =>
                 {
-                    using var ms = new MemoryStream(File.ReadAllBytes(profileFile));
-                    using var archive = new AsaArchive(ms, profileFile, debugSettings);
+                    using var stream = new MemoryStream(File.ReadAllBytes(profileFile));
+                    using var archive = new AsaArchive(stream, profileFile, debugSettings);
 
                     if (AsaProfile.TryRead(archive, out var profile))
                     {
@@ -323,8 +323,8 @@ namespace AsaSavegameToolkit
                         File.WriteAllBytes(Path.Join(debugSettings.OutputDirectory, $"{keyString}.bin"), objectData.Value);
                     }
 
-                    using var ms = new MemoryStream(objectData.Value);
-                    using var archive = new AsaArchive(ms, keyString, debugSettings);
+                    using var stream = new MemoryStream(objectData.Value);
+                    using var archive = new AsaArchive(stream, keyString, debugSettings);
 
                     archive.NameTable = _nameTable;
                     archive.SaveVersion = SaveVersion;

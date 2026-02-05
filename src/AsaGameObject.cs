@@ -43,7 +43,7 @@ namespace AsaSavegameToolkit
                     return false;
                 }
 
-                bool isItem = archive.ReadBool(1, "is item");
+                bool isItem = archive.ReadBool(4, "is item");
                 int nameCount = archive.ReadInt32("name count");
                 var names = new List<AsaName>();
 

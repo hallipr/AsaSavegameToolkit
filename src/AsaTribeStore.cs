@@ -13,7 +13,7 @@ namespace AsaSavegameToolkit
 
             try
             {
-                _ = archive.ReadBool(1, "flags"); // someBool
+                archive.SkipBytes(4, "flags"); // someBool
 
                 var tribes = new List<AsaTribe>();
                 var profiles = new List<AsaProfile>();

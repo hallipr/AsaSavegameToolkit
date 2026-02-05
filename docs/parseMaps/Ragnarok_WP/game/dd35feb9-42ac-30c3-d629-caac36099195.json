@@ -1,0 +1,187 @@
+{
+    "Guid": "dd35feb9-42ac-30c3-d629-caac36099195", 
+    "ClassName": {"Name": "DinoCharacterStatusComponent_BP_Turtle_C", "Instance": 0}, 
+    "IsItem": false, 
+    "Names": [
+        {"Name": "DinoCharacterStatus_BP_Turtle_C1", "Instance":          0}, 
+        {"Name": "Turtle_Character_BP_C"           , "Instance": 2147438170}  
+    ], 
+    "Location": null, 
+    "Properties": [
+        {
+            "Name": "NumberOfLevelUpPointsApplied", 
+            "Type": "ByteProperty", 
+            "Position": 0, 
+            "UnknownByte": 0, 
+            "Value": 6, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "NumberOfLevelUpPointsApplied", 
+            "Type": "ByteProperty", 
+            "Position": 1, 
+            "UnknownByte": 0, 
+            "Value": 2, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "NumberOfLevelUpPointsApplied", 
+            "Type": "ByteProperty", 
+            "Position": 4, 
+            "UnknownByte": 0, 
+            "Value": 3, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "NumberOfLevelUpPointsApplied", 
+            "Type": "ByteProperty", 
+            "Position": 7, 
+            "UnknownByte": 0, 
+            "Value": 4, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "NumberOfLevelUpPointsApplied", 
+            "Type": "ByteProperty", 
+            "Position": 8, 
+            "UnknownByte": 0, 
+            "Value": 4, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "bServerFirstInitialized", 
+            "Type": "BoolProperty", 
+            "Position": 0, 
+            "UnknownByte": 0, 
+            "Value": true, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "BaseCharacterLevel", 
+            "Type": "IntProperty", 
+            "Position": 0, 
+            "UnknownByte": 0, 
+            "Value": 20, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 0, 
+            "UnknownByte": 0, 
+            "Value": 273.24954, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 1, 
+            "UnknownByte": 0, 
+            "Value": 240, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 2, 
+            "UnknownByte": 0, 
+            "Value": 0, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 3, 
+            "UnknownByte": 0, 
+            "Value": 150, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 4, 
+            "UnknownByte": 0, 
+            "Value": 3900, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 5, 
+            "UnknownByte": 0, 
+            "Value": 100, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 6, 
+            "UnknownByte": 0, 
+            "Value": 0, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 7, 
+            "UnknownByte": 0, 
+            "Value": 0, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 8, 
+            "UnknownByte": 0, 
+            "Value": 0.2, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 9, 
+            "UnknownByte": 0, 
+            "Value": 0, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 10, 
+            "UnknownByte": 0, 
+            "Value": 0, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }, 
+        {
+            "Name": "CurrentStatusValues", 
+            "Type": "FloatProperty", 
+            "Position": 11, 
+            "UnknownByte": 0, 
+            "Value": 0, 
+            "FileOffset": 0, 
+            "FileLength": 0
+        }
+    ], 
+    "DataFileIndex": 0, 
+    "PropertyOffset": 96, 
+    "ClassString": "DinoCharacterStatusComponent_BP_Turtle_C", 
+    "ParentNames": [ {"Name": "Turtle_Character_BP_C", "Instance": 2147438170} ]
+}

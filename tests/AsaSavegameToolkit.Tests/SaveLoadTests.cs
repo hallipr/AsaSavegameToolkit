@@ -11,6 +11,7 @@ public sealed class SaveLoadTests
     public void CanProcessRagnarokSave()
     {
         TestSettings settings = TestSettings.Load();
+        // if there's a debugger attached, use a single thread for easier debugging
 
         string saveFilePath = Path.Combine(settings.AssetsDirectory, "Ragnarok_WP.ark");
         Assert.IsTrue(File.Exists(saveFilePath), $"Save file not found: {saveFilePath}");
@@ -27,7 +28,8 @@ public sealed class SaveLoadTests
         
         AsaSavegame savegame = new(saveFilePath, logger, debugSettings);
 
-        savegame.Read();
+        var maxCores = System.Diagnostics.Debugger.IsAttached ? 1 : Environment.ProcessorCount;
+        savegame.Read(maxCores);
 
         Assert.IsNotNull(savegame);
         Assert.IsGreaterThan(0, savegame.GameTime, "GameTime should be greater than 0");
@@ -54,7 +56,8 @@ public sealed class SaveLoadTests
 
         AsaSavegame savegame = new(saveFilePath, logger, debugSettings);
 
-        savegame.Read();
+        var maxCores = System.Diagnostics.Debugger.IsAttached ? 1 : Environment.ProcessorCount;
+        savegame.Read(maxCores);
 
         Assert.IsNotNull(savegame);
         Assert.IsGreaterThan(0, savegame.GameTime, "GameTime should be greater than 0");
