@@ -21,7 +21,8 @@ namespace AsaSavegameToolkit.Properties
 
         public override string ToString()
         {
-            return $"Type: {Type}, Name: {Name}, Value: {Value?.ToString() ?? "null"} [@{FileOffset:X8}+{FileLength}]";
+            var name = Position == 0 ? Name : $"{Name}[{Position}]";
+            return $"Type: {Type}, Name: {name}, Value: {Value?.ToString() ?? "null"} [@{FileOffset:X8}+{FileLength}]";
         }
     }
 }

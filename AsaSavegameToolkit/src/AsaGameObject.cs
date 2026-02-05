@@ -66,7 +66,7 @@ namespace AsaSavegameToolkit
                 }
 
                 int dataFileIndex = archive.ReadInt32();
-                archive.SkipBytes(1);
+                archive.SkipBytes(2);
                 long propertyOffset = archive.Position;
 
                 var properties = new List<AsaProperty<dynamic>>();

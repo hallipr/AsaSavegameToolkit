@@ -12,7 +12,6 @@ namespace AsaSavegameToolkit
     {
         private readonly Stream _stream;
         private readonly string? _debugOutputPath;
-        private readonly string _fileName;
         private readonly BinaryReader _reader;
 
         /// <summary>
@@ -21,6 +20,7 @@ namespace AsaSavegameToolkit
         public List<ReadSection> SectionsRead { get; } = [];
         public List<SkippedSection> SectionsSkipped { get; } = [];
 
+        public string FileName { get; }
         public Dictionary<int, string> ConstantNameTable { get; set; } = [];
         public Dictionary<int, string> NameTable { get; set; } = [];
         public bool HasNameTable => (NameTable?.Count > 0) || (ConstantNameTable?.Count > 0);
@@ -39,7 +39,7 @@ namespace AsaSavegameToolkit
         {
             _stream = stream ?? throw new ArgumentNullException(nameof(stream));
             _debugOutputPath = debugOutputPath;
-            _fileName = fileName;
+            FileName = fileName;
             _reader = new BinaryReader(_stream);
         }
 
@@ -200,7 +200,7 @@ namespace AsaSavegameToolkit
         {
             if(!string.IsNullOrEmpty(_debugOutputPath))
             {
-                var fileName = Path.ChangeExtension(_fileName, ".bin");
+                var fileName = Path.ChangeExtension(FileName, ".bin");
                 var filePath = Path.Join(_debugOutputPath, "source", fileName);
                 WriteFileStream(filePath);
 

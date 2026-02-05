@@ -10,21 +10,31 @@ seq:
   - id: save_version
     type: s2
     doc: Save format version number
+  - id: unknown_1
+    type: u4
+    if: save_version >= 14
+    doc: Unknown integer field
+  - id: unknown_2
+    type: u4
+    if: save_version >= 14
+    doc: Unknown integer field
   - id: name_table_offset
     type: s4
     doc: Offset to the name table within this blob
   - id: game_time
     type: f8
     doc: In-game time as a double
-  - id: unknown_int1
-    type: s4
+  - id: unknown_3
+    type: u4
     if: save_version > 11
-    doc: Unknown integer field (appears to be 582 in observed saves)
+    doc: Unknown integer field
   - id: data_files
     type: data_files_section
     doc: List of data files referenced by this save
-  - id: name_table
+instances:
+  name_table:
     type: name_table_section
+    pos: name_table_offset
     doc: String name table used for efficient storage
 types:
   data_files_section:
@@ -35,10 +45,6 @@ types:
         type: data_file_entry
         repeat: expr
         repeat-expr: count
-      - id: unknown1
-        type: s4
-      - id: unknown2
-        type: s4
   data_file_entry:
     seq:
       - id: name
@@ -51,24 +57,29 @@ types:
       - id: count
         type: s4
       - id: names
-        type: asa_string
+        type: name_table_entry
         repeat: expr
         repeat-expr: count
+  name_table_entry:
+    seq:
+      - id: key
+        type: s4
+      - id: value
+        type: asa_string
   asa_string:
     doc: |
       ARK string format. Size is a signed 32-bit integer.
       Positive = ASCII string, Negative = UTF-16 string
+      encoded_string:
     seq:
-      - id: size
+      - id: length
         type: s4
-      - id: data
+      - id: bytes
         size: |
-          size == 0 ? 0 :
-          size == 1 ? 1 :
-          size == -1 ? 2 :
-          size < 0 ? (-size * 2) :
-          size
-        type: str
-        encoding: |
-          size < 0 ? "UTF-16LE" : "ASCII"
-        if: size != 0
+          is_wide ? length * -2 : length
+    instances:
+      is_wide:
+        value: length < 0
+      value:
+        value: |
+          is_wide ? bytes.to_s('utf16') : bytes.to_s('utf8')

@@ -29,21 +29,16 @@ namespace AsaSavegameToolkit
                     property = null;
                     return false;
                 }
-
+                archive.SkipBytes(4);
                 var dataSize = archive.ReadInt32();
-                var position = archive.ReadInt32();
+                var indexed = dataSize > 0 && archive.ReadByte() > 0;
+                var position = indexed ? archive.ReadInt32() : 0;
                 var startPosition = archive.Position;
 
                 switch (valueTypeName.Name)
                 {
                     case "BoolProperty":
-                        if (TryReadPropertyValue(valueTypeName, archive, out var boolValue))
-                        {
-                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, boolValue);
-                            return true;
-                        }
-                        break;
-
+                    case "ByteProperty":
                     case "FloatProperty":
                     case "IntProperty":
                     case "Int8Property":
@@ -57,10 +52,9 @@ namespace AsaSavegameToolkit
                     case "NameProperty":
                     case "SoftObjectProperty":
                     case "ObjectProperty":
-                        var unknownByte = archive.ReadByte();
                         if (TryReadPropertyValue(valueTypeName, archive, out var simpleValue))
                         {
-                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, unknownByte, simpleValue);
+                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, simpleValue);
                             return true;
                         }
                         break;
@@ -106,29 +100,6 @@ namespace AsaSavegameToolkit
                             archive.Position = startPosition;
                             archive.SkipBytes(dataSize);
                             property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, 0);
-                            return true;
-                        }
-                        break;
-
-                    case "ByteProperty":
-                        if (archive.TryReadName(out var byteType))
-                        {
-                            if (byteType.Equals(AsaName.NameNone))
-                            {
-                                property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, archive.ReadByte(), archive.ReadByte());
-                            }
-                            else
-                            {
-                                if (archive.TryReadName(out var byteValue))
-                                {
-                                    property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, archive.ReadByte(), byteValue);
-                                }
-                                else
-                                {
-                                    property = null;
-                                    return false;
-                                }
-                            }
                             return true;
                         }
                         break;
@@ -215,7 +186,7 @@ namespace AsaSavegameToolkit
                         return true;
                         
                     case "BoolProperty":
-                        value = archive.ReadInt16() == 1;
+                        value = archive.ReadByte() > 0;
                         return true;
                         
                     case "SoftObjectProperty":
