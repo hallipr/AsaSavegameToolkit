@@ -8,7 +8,7 @@ namespace AsaSavegameToolkit.Structs
 
         public AsaRotator(AsaArchive archive)
         {
-            using var _ = archive.Track("rotator");
+            using var _ = archive.Track("rotator", string.Empty);
             Pitch = archive.ReadDouble("pitch");
             Yaw = archive.ReadDouble("yaw");
             Roll = archive.ReadDouble("roll");

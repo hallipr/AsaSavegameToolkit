@@ -1,0 +1,11 @@
+{
+    "Guid": "006f9eb8-4ffe-de14-920a-929d800d09d1", 
+    "ClassName": {"Name": "NPCZoneManager", "Instance": 0}, 
+    "IsItem": false, 
+    "Names": [ {"Name": "NPCZoneManager", "Instance": 767} ], 
+    "Properties": [], 
+    "DataFileIndex": 0, 
+    "PropertyOffset": 45, 
+    "ClassString": "NPCZoneManager", 
+    "ParentNames": []
+}

@@ -9,7 +9,7 @@ namespace AsaSavegameToolkit.Structs
 
         public AsaLinearColor(AsaArchive archive)
         {
-            using var _ = archive.Track("linear color");
+            using var _ = archive.Track("linear color", string.Empty);
             R = archive.ReadSingle("R");
             G = archive.ReadSingle("G");
             B = archive.ReadSingle("B");

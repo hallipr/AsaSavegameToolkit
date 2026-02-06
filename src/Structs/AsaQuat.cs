@@ -9,7 +9,7 @@ namespace AsaSavegameToolkit.Structs
 
         public AsaQuat(AsaArchive archive)
         {
-            using var _ = archive.Track("quat");
+            using var _ = archive.Track("quat", string.Empty);
             X = archive.ReadDouble("X");
             Y = archive.ReadDouble("Y");
             Z = archive.ReadDouble("Z");

@@ -13,7 +13,7 @@ public sealed class SaveLoadTests
         TestSettings settings = TestSettings.Load();
         // if there's a debugger attached, use a single thread for easier debugging
 
-        string saveFilePath = Path.Combine(settings.AssetsDirectory, "Ragnarok_WP.ark");
+        string saveFilePath = Path.Combine(settings.AssetsDirectory, "Ragnarok_WP2.ark");
         Assert.IsTrue(File.Exists(saveFilePath), $"Save file not found: {saveFilePath}");
 
         string outputPath = Path.Combine(settings.OutputDirectory, "Ragnarok_WP");
@@ -72,7 +72,8 @@ public sealed class SaveLoadTests
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            testContext.WriteLine($"[{logLevel}] {formatter(state, exception)}");
+            var message = formatter(state, exception);
+            testContext.WriteLine($"[{logLevel}] {message}");
         }
     }
 }

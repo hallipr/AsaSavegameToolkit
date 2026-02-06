@@ -7,6 +7,7 @@ public class AsaSaveHeader
     public double GameTime { get; internal set; }
     public required Dictionary<int, string> NameTable { get; set; }
     public required List<string> DataFiles { get; set; }
+    public Dictionary<string, string> HexNameTable => NameTable.ToDictionary(x => x.Key.ToString("X8"), x => x.Value);
 
     public static AsaSaveHeader Read(AsaArchive archive)
     {
@@ -53,7 +54,7 @@ public class AsaSaveHeader
     {
         List<string> dataFiles = [];
 
-        using var _ = archive.Track("data files");
+        using var _ = archive.Track("string array", "data files");
         int dataFileCount = archive.ReadInt32("data file count");
         while (dataFileCount-- > 0)
         {
@@ -72,7 +73,7 @@ public class AsaSaveHeader
         Dictionary<int, string> nameTable = [];
 
         archive.Position = nameTableOffset;
-        using var _ = archive.Track("name table");
+        using var _ = archive.Track("index+string array", "name table");
 
         int nameCount = archive.ReadInt32("count");
 

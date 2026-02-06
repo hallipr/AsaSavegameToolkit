@@ -8,7 +8,7 @@ namespace AsaSavegameToolkit.Structs
 
         public AsaVector(AsaArchive archive)
         {
-            using var _ = archive.Track("vector");
+            using var _ = archive.Track("vector", string.Empty);
             X = archive.ReadDouble("X");
             Y = archive.ReadDouble("Y");
             Z = archive.ReadDouble("Z");

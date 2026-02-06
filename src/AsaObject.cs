@@ -31,7 +31,7 @@ namespace AsaSavegameToolkit
 
             try
             {
-                using var tracker = archive.Track("object");
+                using var tracker = archive.Track("asaObject", "asa object");
                 Guid uuid = archive.ReadBytes(16, "uuid").ToGuid();
                 
                 if (!archive.TryReadString("class name", out var className))

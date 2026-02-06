@@ -24,18 +24,45 @@ namespace AsaSavegameToolkit
                     return false;
                 }
 
-                if (!archive.TryReadName("type name", out var valueTypeName))
+                // UE5.5 generic type format (SaveVersion 14+)
+                return TryReadPropertyUE55(archive, keyName, inArray, out property);
+            }
+            catch
+            {
+                property = null;
+                return false;
+            }
+        }
+
+        private static bool TryReadPropertyUE55(AsaArchive archive, AsaName keyName, bool inArray, [NotNullWhen(true)] out AsaProperty<dynamic>? property)
+        {
+            try
+            {
+                // Read generic type (type name + subtypes recursively)
+                if (!AsaGenericType.TryRead(archive, out var genericType) || genericType == null)
                 {
                     property = null;
                     return false;
                 }
-                archive.SkipBytes(4);
-                var dataSize = archive.ReadInt32("data size");
-                var indexed = dataSize > 0 && archive.ReadBool(1, "indexed");
-                var position = indexed ? archive.ReadInt32("index") : 0;
-                var startPosition = archive.Position;
 
-                switch (valueTypeName.Name)
+                var dataSize = archive.ReadInt32("data size");
+                
+                // Read flags and position (if not boolean)
+                byte flags = 0;
+                int position = 0;
+                if (genericType.TypeName.Name != "BoolProperty")
+                {
+                    flags = archive.ReadByte("flags");
+                    if ((flags & 0x01) == 1)
+                    {
+                        position = archive.ReadInt32("position");
+                    }
+                }
+
+                var startPosition = archive.Position;
+                var valueTypeName = genericType.TypeName.Name;
+
+                switch (valueTypeName)
                 {
                     case "BoolProperty":
                     case "ByteProperty":
@@ -52,37 +79,35 @@ namespace AsaSavegameToolkit
                     case "NameProperty":
                     case "SoftObjectProperty":
                     case "ObjectProperty":
-                        if (TryReadPropertyValue(valueTypeName, archive, out var simpleValue))
+                        if (TryReadPropertyValue(genericType.TypeName, archive, out var simpleValue))
                         {
-                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, simpleValue);
+                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName, position, simpleValue);
                             return true;
                         }
                         break;
 
                     case "StructProperty":
-                        if (archive.TryReadName("struct type", out var structType))
+                        // In UE5.5, struct type is in subtypes[0]
+                        if (genericType.SubTypes.Count > 0)
                         {
-                            var structUnknownByte = archive.ReadByte("struct flags");
+                            var structType = genericType.SubTypes[0].TypeName;
                             if (TryReadStructPropertyValue(archive, dataSize, structType, inArray, out var structValue))
                             {
-                                property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, structUnknownByte, structValue);
+                                property = new AsaProperty<dynamic>(keyName.Name, valueTypeName, position, structValue);
                                 return true;
                             }
-                        }
-                        else
-                        {
-                            archive.Position = startPosition;
-                            archive.SkipBytes(dataSize);
-                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, 0);
-                            return true;
                         }
                         break;
 
                     case "ArrayProperty":
-                        if (TryReadArrayProperty(keyName, position, archive, dataSize, out var arrayProp))
+                        if (genericType.SubTypes.Count > 0)
                         {
-                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, arrayProp.Value);
-                            return true;
+                            var arrayElementType = genericType.SubTypes[0];
+                            if (TryReadArrayPropertyUE55(keyName, archive, arrayElementType, out var arrayProp))
+                            {
+                                property = new AsaProperty<dynamic>(keyName.Name, valueTypeName, position, arrayProp.Value);
+                                return true;
+                            }
                         }
                         break;
 
@@ -91,7 +116,7 @@ namespace AsaSavegameToolkit
                         {
                             if (TryReadMapProperty(archive, out var mapValue))
                             {
-                                property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, mapValue);
+                                property = new AsaProperty<dynamic>(keyName.Name, valueTypeName, position, mapValue);
                                 return true;
                             }
                         }
@@ -99,7 +124,7 @@ namespace AsaSavegameToolkit
                         {
                             archive.Position = startPosition;
                             archive.SkipBytes(dataSize);
-                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName.Name, position, 0, 0);
+                            property = new AsaProperty<dynamic>(keyName.Name, valueTypeName, position, 0);
                             return true;
                         }
                         break;
@@ -208,7 +233,7 @@ namespace AsaSavegameToolkit
         {
             if (archive.TryReadName("soft obj name", out var objectName) && archive.TryReadName("soft obj value", out var objectValue))
             {
-                value = new AsaProperty<dynamic>(objectName.ToString(), "Propertiestr", 0, 0, objectValue);
+                value = new AsaProperty<dynamic>(objectName.ToString(), "Propertiestr", 0, objectValue);
                 return true;
             }
             
@@ -282,56 +307,34 @@ namespace AsaSavegameToolkit
             }
         }
 
-        private static bool TryReadArrayProperty(AsaName key, int position, AsaArchive archive, int dataSize, [NotNullWhen(true)] out AsaPropertyArray? result)
+        private static bool TryReadArrayPropertyUE55(AsaName key, AsaArchive archive, AsaGenericType arrayElementType, [NotNullWhen(true)] out AsaPropertyArray? result)
         {
             try
             {
-                if (!archive.TryReadName("array type", out var arrayType))
-                {
-                    result = null;
-                    return false;
-                }
-
-                var endOfStruct = archive.ReadByte("array terminator");
+                var startPosition = archive.Position;
                 var arrayLength = archive.ReadInt32("array length");
-                var startOfArrayValuesPosition = archive.Position;
+                var arrayTypeName = arrayElementType.TypeName.Name;
 
-                if (arrayType.Name == "StructProperty")
+                if (arrayTypeName == "StructProperty")
                 {
-                    return TryReadStructArray(archive, arrayType, arrayLength, out result);
+                    return TryReadStructArrayUE55(archive, key, arrayElementType, arrayLength, out result);
                 }
 
                 // Read simple array
-                var expectedEndOfArrayPosition = startOfArrayValuesPosition + dataSize - 4;
                 var array = new List<dynamic>();
 
-                //try
-                //{
-                    for (int i = 0; i < arrayLength; i++)
+                for (int i = 0; i < arrayLength; i++)
+                {
+                    if (TryReadPropertyValue(arrayElementType.TypeName, archive, out var item))
                     {
-                        if (TryReadPropertyValue(arrayType, archive, out var item))
-                        {
-                            array.Add(item);
-                        }
-                        else
-                        {
-                            // Failed to read item
-                            break;
-                        }
+                        array.Add(item);
                     }
-
-                    if (expectedEndOfArrayPosition != archive.Position)
+                    else
                     {
-                        var skipBytes = expectedEndOfArrayPosition - archive.Position;
-                        archive.SkipBytes((int)skipBytes);
+                        result = null;
+                        return false;
                     }
-                //}
-                //catch (Exception)
-                //{
-                //    archive.Position = startOfArrayValuesPosition;
-                //    string content = Convert.ToHexString(archive.ReadBytes(dataSize - 4, "error read"));
-                //    array.Add(content);
-                //}
+                }
 
                 result = new AsaPropertyArray(key.Name, array);
                 return true;
@@ -343,33 +346,21 @@ namespace AsaSavegameToolkit
             }
         }
 
-        private static bool TryReadStructArray(AsaArchive archive, AsaName arrayType, int arrayLength, [NotNullWhen(true)] out AsaPropertyArray? result)
+        private static bool TryReadStructArrayUE55(AsaArchive archive, AsaName key, AsaGenericType arrayElementType, int arrayLength, [NotNullWhen(true)] out AsaPropertyArray? result)
         {
             try
             {
                 var structArray = new List<dynamic>();
-
-                if (!archive.TryReadName("struct name", out var name) || !archive.TryReadName("struct type", out var type))
-                {
-                    result = null;
-                    return false;
-                }
-
-                var dataSize = archive.ReadInt32("element size");
-                var position = archive.ReadInt32("index");
                 
-                if (!archive.TryReadName("struct type name", out var structType))
-                {
-                    result = null;
-                    return false;
-                }
-
-                var unknownByte = archive.ReadByte("flags");
-                archive.SkipBytes(16);
+                // In UE5.5, the struct type information is in the generic type subtypes
+                // arrayElementType is StructProperty with subtypes
+                AsaName structType = arrayElementType.SubTypes.Count > 0 
+                    ? arrayElementType.SubTypes[0].TypeName 
+                    : AsaName.NameNone;
 
                 for (int i = 0; i < arrayLength; i++)
                 {
-                    if (TryReadStructPropertyValue(archive, dataSize, type, true, out var structProperties))
+                    if (TryReadStructPropertyValue(archive, 0, structType, true, out var structProperties))
                     {
                         structArray.Add(structProperties);
                     }
@@ -380,7 +371,7 @@ namespace AsaSavegameToolkit
                     }
                 }
 
-                result = new AsaPropertyArray(name.Name, structArray);
+                result = new AsaPropertyArray(key.Name, structArray);
                 return true;
             }
             catch
@@ -462,13 +453,13 @@ namespace AsaSavegameToolkit
 
                                 if (TryReadPropertyValue(dataType, archive, out var keyValue))
                                 {
-                                    propertyValues.Add(new AsaProperty<dynamic>(subKeyName.Name, dataType.Name, 0, 0, keyValue));
+                                    propertyValues.Add(new AsaProperty<dynamic>(subKeyName.Name, dataType.Name, 0, keyValue));
                                 }
                             }
 
                             if (propertyValues.Count > 0)
                             {
-                                property.Add(new AsaProperty<dynamic>(propertyName.Name, "PropertyList", 0, 0, propertyValues));
+                                property.Add(new AsaProperty<dynamic>(propertyName.Name, "PropertyList", 0, propertyValues));
                             }
                             break;
                     }
@@ -523,13 +514,13 @@ namespace AsaSavegameToolkit
                         case "SetProperty":
                             if (TryReadSetProperty(archive, out var mapValue))
                             {
-                                propertyValues.Add(new AsaProperty<dynamic>(valueKeyName, mapType.Name, 0, 0, mapValue));
+                                propertyValues.Add(new AsaProperty<dynamic>(valueKeyName, mapType.Name, 0, mapValue));
                             }
                             break;
                     }
                 }
 
-                result = new AsaProperty<dynamic>(keyName, valueType.Name, 0, 0, propertyValues);
+                result = new AsaProperty<dynamic>(keyName, valueType.Name, 0, propertyValues);
                 return true;
             }
             catch

@@ -1,0 +1,21 @@
+{
+    "Guid": "008c537d-4de2-767d-f9da-0cb77c73d8e3", 
+    "ClassName": {"Name": "PrimalItemSkin_CharacterSkin_Gladiatrix_SkinPack_C", "Instance": 0}, 
+    "IsItem": false, 
+    "Names": [ {"Name": "PrimalItemSkin_CharacterSkin_Gladiatrix_SkinPack_C", "Instance": 2147316130} ], 
+    "Properties": [
+        {
+            "Name": "CustomItemDatas", 
+            "Type": "ArrayProperty", 
+            "Index": 0, 
+            "Value": [
+                [ {"Name": "CustomDataBytes", "Type": "StructProperty", "Index": 0, "Value": []} ], 
+                [                                                                                ]  
+            ]
+        }
+    ], 
+    "DataFileIndex": 0, 
+    "PropertyOffset": 88, 
+    "ClassString": "PrimalItemSkin_CharacterSkin_Gladiatrix_SkinPack_C", 
+    "ParentNames": []
+}

@@ -17,7 +17,7 @@ namespace AsaSavegameToolkit.Structs
         {
             try
             {
-                using var _ = archive.Track("unique netId repl");
+                using var _ = archive.Track("repl", "Unique net id replication");
                 byte unknown = archive.ReadByte("flags");
                 
                 if (!archive.TryReadString("type", out var valueType))

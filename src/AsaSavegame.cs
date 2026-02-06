@@ -50,7 +50,7 @@ namespace AsaSavegameToolkit
         public AsaGameObject[] Objects => [.. _gameObjects.Values];
         public AsaTribe[] Tribes => [.. _tribeData];
         public AsaProfile[] Profiles => [.. _profileData];
-        public ConcurrentDictionary<string, (ParsedSection[] Parsed, SkippedSection[] Skipped)> ParserCoverage { get; } = [];
+        public ConcurrentDictionary<string, CoverageNode> ParserCoverage { get; } = [];
 
         public bool TryGetActorLocation(Guid id, [NotNullWhen(true)] out AsaLocation? location)
         {
@@ -189,7 +189,7 @@ namespace AsaSavegameToolkit
                 Parallel.ForEach(tribeFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, tribeFile =>
                 {
                     using var stream = new MemoryStream(File.ReadAllBytes(tribeFile));
-                    using var archive = new AsaArchive(stream, tribeFile, debugSettings);
+                    using var archive = new AsaArchive(_logger, stream, tribeFile, debugSettings);
                     archive.NameTable = _nameTable;
 
                     if (AsaTribe.TryRead(archive, usePropertiesOffset: true, out var tribe))
@@ -216,7 +216,7 @@ namespace AsaSavegameToolkit
 
                     if (debugSettings.TrackCoverage)
                     {
-                        ParserCoverage.TryAdd(archive.FileName, (archive.SectionsRead.ToArray(), archive.SectionsSkipped.ToArray()));
+                        ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
                     }
                 });
 
@@ -240,7 +240,7 @@ namespace AsaSavegameToolkit
                 Parallel.ForEach(profileFiles, new ParallelOptions { MaxDegreeOfParallelism = maxCores }, profileFile =>
                 {
                     using var stream = new MemoryStream(File.ReadAllBytes(profileFile));
-                    using var archive = new AsaArchive(stream, profileFile, debugSettings);
+                    using var archive = new AsaArchive(_logger, stream, profileFile, debugSettings);
 
                     if (AsaProfile.TryRead(archive, out var profile))
                     {
@@ -266,7 +266,7 @@ namespace AsaSavegameToolkit
 
                     if (debugSettings.TrackCoverage)
                     {
-                        ParserCoverage.TryAdd(archive.FileName, (archive.SectionsRead.ToArray(), archive.SectionsSkipped.ToArray()));
+                        ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
                     }
                 });
 
@@ -324,18 +324,13 @@ namespace AsaSavegameToolkit
                     }
 
                     using var stream = new MemoryStream(objectData.Value);
-                    using var archive = new AsaArchive(stream, keyString, debugSettings);
+                    using var archive = new AsaArchive(_logger, stream, keyString, debugSettings);
 
                     archive.NameTable = _nameTable;
                     archive.SaveVersion = SaveVersion;
 
                     if (AsaGameObject.TryRead(objectData.Key, archive, out var gameObject))
                     {
-                        if (TryGetActorLocation(objectData.Key, out var location))
-                        {
-                            gameObject.Location = location;
-                        }
-
                         if (objectBag.ContainsKey(gameObject.Guid))
                         {
                             gameObject = gameObject with { Guid = Guid.NewGuid() };
@@ -352,7 +347,7 @@ namespace AsaSavegameToolkit
 
                     if (debugSettings.TrackCoverage)
                     {
-                        ParserCoverage.TryAdd(archive.FileName, (archive.SectionsRead.ToArray(), archive.SectionsSkipped.ToArray()));
+                        ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
 
                         if (debugSettings.HasOutput)
                         {
@@ -361,9 +356,9 @@ namespace AsaSavegameToolkit
                         }
                     }
                 }
-                catch
+                catch(Exception ex)
                 {
-                    _logger.LogError("Failed to parse game object {Key}", objectData.Key);
+                    _logger.LogError(ex, "Failed to parse game object {Key}", objectData.Key);
                 }
             });
 
@@ -391,7 +386,7 @@ namespace AsaSavegameToolkit
                     } 
                     
                     using var stream = new MemoryStream(sqlBytes);
-                    using var archive = new AsaArchive(stream, $"{key}_{row}", debugSettings);
+                    using var archive = new AsaArchive(_logger, stream, $"{key}_{row}", debugSettings);
                     archive.NameTable = _nameTable;
 
                     var result = processSqlBytes(row, archive);
@@ -403,7 +398,7 @@ namespace AsaSavegameToolkit
 
                     if (debugSettings.TrackCoverage)
                     {
-                        ParserCoverage.TryAdd(archive.FileName, (archive.SectionsRead.ToArray(), archive.SectionsSkipped.ToArray()));
+                        ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
 
                         if (debugSettings.HasOutput)
                         {

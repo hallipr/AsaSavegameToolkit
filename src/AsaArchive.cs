@@ -1,34 +1,51 @@
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 
 using AsaSavegameToolkit.Types;
+
+using Microsoft.Extensions.Logging;
 
 namespace AsaSavegameToolkit
 {
 
     public class AsaArchive : IDisposable
     {
+        private readonly ILogger _logger;
         private readonly Stream _stream;
         private readonly DebugSettings _debugSettings;
         private readonly BinaryReader _reader;
+        private readonly Stack<CoverageNode> _coverageStack = new();
 
-        public AsaArchive(Stream stream, string fileName) : this(stream, fileName, DebugSettings.None)
+        public AsaArchive(ILogger logger, Stream stream, string fileName) : this(logger, stream, fileName, DebugSettings.None)
         {
         }
 
-        public AsaArchive(Stream stream, string fileName, DebugSettings debugSettings)
+        public AsaArchive(ILogger logger, Stream stream, string fileName, DebugSettings debugSettings)
         {
+            _logger = logger;
             _stream = stream ?? throw new ArgumentNullException(nameof(stream));
             FileName = fileName;
             _debugSettings = debugSettings;
             _reader = new BinaryReader(_stream);
+            
+            // Initialize coverage tracking with root node
+            CoverageRoot = new CoverageNode
+            {
+                Offset = 0,
+                Length = 0, // Will be updated as we read
+                Description = "root",
+                Type = "file",
+                IsSkipped = false
+            };
+
+            _coverageStack.Push(CoverageRoot);
         }
 
         /// <summary>
-        /// List of all sections read from the file
+        /// Root node of the hierarchical coverage tree
         /// </summary>
-        public List<ParsedSection> SectionsRead { get; } = [];
-        public List<SkippedSection> SectionsSkipped { get; } = [];
+        public CoverageNode CoverageRoot { get; }
 
         public string FileName { get; }
         public Dictionary<int, string> ConstantNameTable { get; set; } = [];
@@ -45,61 +62,58 @@ namespace AsaSavegameToolkit
         public long Limit => _stream.Length;
         public short SaveVersion { get; internal set; }
 
-        /// <summary>
-        /// Records a section that was read from the file and its purpose is known
-        /// </summary>
-        public void MarkParsed(long offset, long length, string type)
-        {
-            if (_debugSettings.TrackCoverage)
-            {
-                SectionsRead.Add(new ParsedSection(offset, length, type));
-            }
-        }
-
-        /// <summary>
-        /// Records that a section of the data was skipped or its purpose is unknown
-        /// </summary>
-        /// <remarks>
-        /// If sections overlap, the narrowest/smallest section takes precedence. This implies that the whole file is
-        /// initially considered "skipped" until marked otherwise and explicitly marking a section as skipped is only
-        /// necessary if it overlaps a larger section that was marked as parsed.
-        /// </remarks>
-        public void MarkSkipped(long offset, long length, string reason)
-        {
-            if (_debugSettings.TrackCoverage)
-            {
-                SectionsSkipped.Add(new SkippedSection(offset, length, reason));
-            }
-        }
-
         #region Read Operations
 
-        public IDisposable Track(string type)
+        public IDisposable? Track(string type, string description)
         {
-            return _debugSettings.TrackCoverage ? new CoverageTracker(this, type) : NullTracker.Shared;
+            return _debugSettings.TrackCoverage ? new CoverageTracker(this, type, description) : null;
         }
 
-        public T Track<T>(string type, Func<T> action)
+        public T Track<T>(string type, string description, Func<T> action)
         {
             if (!_debugSettings.TrackCoverage)
             {
                 return action();
             }
 
-            using var tracker = Track(type);
+            using var tracker = Track(type, description);
             return action();
         }
 
-        public void SkipBytes(int count, string reason = "skipped")
+        public void SkipBytes(int count, string reason = "")
         {
-            var offset = _stream.Position;
-            MarkSkipped(offset, count, reason);
+            if (count < 0)
+            {
+                _logger.LogError("Attempting to skip a negative number of bytes at offset {Offset:X}. Count: {Count}", _stream.Position, count);
+                throw new ArgumentOutOfRangeException(nameof(count), "SkipButes count must be greater than zero.");
+            }
+
+            if (_stream.Position + count >= _stream.Length)
+            {
+                _logger.LogError("Attempting to skip beyond the end of the stream at offset {Offset:X}. Count: {Count}", _stream.Position, count);
+                throw new ArgumentOutOfRangeException(nameof(count), "Attempting to skip beyond the end of the stream.");
+            }
+
+            if (_debugSettings.TrackCoverage)
+            {
+                var offset = _stream.Position;
+                var node = new CoverageNode
+                {
+                    Offset = offset,
+                    Length = count,
+                    Type = "skip",
+                    Description = reason,
+                    IsSkipped = true,
+                };
+                _coverageStack.Peek().Children.Add(node);
+            }
+            
             _stream.Seek(count, SeekOrigin.Current);
         }
 
         public bool TryReadString(string description, [NotNullWhen(true)] out string? value)
         {
-            using var tracker = Track(description);
+            using var tracker = Track("string", description);
 
             int size = ReadInt32("string size");
             if (size == 0)
@@ -151,7 +165,7 @@ namespace AsaSavegameToolkit
 
         private bool TryReadNameFromTable(string description, [NotNullWhen(true)] out AsaName? name)
         {
-            using var tracker = Track(description);
+            using var tracker = Track("name", description);
             try
             {
                 int id = ReadInt32("name id");
@@ -181,14 +195,14 @@ namespace AsaSavegameToolkit
             }
         }
 
-        public int ReadInt32(string description) => Track(description, _reader.ReadInt32);
-        public uint ReadUInt32(string description) => Track(description, _reader.ReadUInt32);
-        public short ReadInt16(string description) => Track(description, _reader.ReadInt16);
-        public long ReadInt64(string description) => Track(description, _reader.ReadInt64);
-        public float ReadSingle(string description) => Track(description, _reader.ReadSingle);
-        public double ReadDouble(string description) => Track(description, _reader.ReadDouble);
-        public byte ReadByte(string description) => Track(description, _reader.ReadByte);
-        public byte[] ReadBytes(int length, string description) => Track(description, () => _reader.ReadBytes(length));
+        public byte ReadByte(string description) => Track("s1", description, _reader.ReadByte);
+        public short ReadInt16(string description) => Track("s2", description, _reader.ReadInt16);
+        public int ReadInt32(string description) => Track("s4", description, _reader.ReadInt32);
+        public long ReadInt64(string description) => Track("s8", description, _reader.ReadInt64);
+        public float ReadSingle(string description) => Track("f4", description, _reader.ReadSingle);
+        public double ReadDouble(string description) => Track("f8", description, _reader.ReadDouble);
+        public uint ReadUInt32(string description) => Track("u4", description, _reader.ReadUInt32);
+        public byte[] ReadBytes(int length, string description) => Track("bytes", description, () => _reader.ReadBytes(length));
 
         public bool ReadBool(int length, string description)
         {
@@ -201,7 +215,7 @@ namespace AsaSavegameToolkit
         {
             try
             {
-                using var tracker = Track(description);
+                using var tracker = Track("string", description);
                 int length = ReadByte("string length");
                 SkipBytes(1);
                 value = Encoding.UTF8.GetString(ReadBytes(length - 1, "string bytes"));
@@ -223,214 +237,102 @@ namespace AsaSavegameToolkit
         {
             var sb = new StringBuilder();
 
-            // Sort sections by offset, then by length (descending) for proper nesting
-            var sortedParsed = SectionsRead.OrderBy(s => s.Offset).ThenByDescending(s => s.Length).ToList();
-            var sortedSkipped = SectionsSkipped.OrderBy(s => s.Offset).ThenByDescending(s => s.Length).ToList();
-
-            // Pre-calculate parent-child relationships for parsed sections
-            var parentMap = BuildParentMap(sortedParsed);
-            
-            // Pre-read and cache all section data
-            var sectionData = PreloadSectionData(sortedParsed);
-
             // Add title and file info
             sb.AppendLine($"# {Path.GetFileName(FileName)}");
             sb.AppendLine();
             sb.AppendLine($"File Size: {_stream.Length:N0} bytes (0x{_stream.Length:X})");
-            sb.AppendLine($"Sections Read: {sortedParsed.Count}");
-            sb.AppendLine($"Sections Skipped: {sortedSkipped.Count}");
+            
+            int parsedCount = CountNodes(CoverageRoot, false);
+            int skippedCount = CountNodes(CoverageRoot, true);
+            
+            sb.AppendLine($"Sections Read: {parsedCount}");
+            sb.AppendLine($"Sections Skipped: {skippedCount}");
             sb.AppendLine();
 
-            // Merge and process all sections linearly
-            var allSections = MergeSections(sortedParsed, sortedSkipped);
-            
-            long currentOffset = 0;
-            
-            foreach (var section in allSections)
-            {
-                // Add gap if there is one
-                if (currentOffset < section.Offset)
-                {
-                    AddUnknownSection(sb, currentOffset, section.Offset - currentOffset);
-                    currentOffset = section.Offset;
-                }
+            // Output table header
+            sb.AppendLine("| offset | offset | type   |                  hex |    parsed | description           |");
+            sb.AppendLine("| -----: | -----: | ------ | -------------------: | --------: | --------------------- |");
 
-                if (section.IsTable)
-                {
-                    // Output table for consecutive parsed sections
-                    AddSectionsTable(sb, section.ParsedSections!, parentMap, sectionData);
-                    currentOffset = section.Offset + section.Length;
-                }
-                else
-                {
-                    // Output skipped section with hex dump
-                    sb.AppendLine($"## skipped ({section.Reason}) - Offset: {section.Offset:X6} - Length {section.Length}");
-                    sb.AppendLine();
-                    AddHexDump(sb, section.Offset, section.Length);
-                    currentOffset = section.Offset + section.Length;
-                }
-            }
+            // Pre-read and cache all small section data
+            var sectionData = PreloadAllSectionData(CoverageRoot);
 
-            // Add any remaining unknown data
-            if (currentOffset < _stream.Length)
-            {
-                AddUnknownSection(sb, currentOffset, _stream.Length - currentOffset);
-            }
+            // Process the hierarchical structure as a flat table
+            ProcessNodesAsTable(sb, CoverageRoot.Children, 0, sectionData);
 
+            sb.AppendLine();
             return sb.ToString();
         }
 
-        private Dictionary<ParsedSection, bool> BuildParentMap(List<ParsedSection> sections)
+        private int CountNodes(CoverageNode node, bool countSkipped)
         {
-            var parentMap = new Dictionary<ParsedSection, bool>();
-            
-            for (int i = 0; i < sections.Count; i++)
+            int count = (node.IsSkipped == countSkipped && node != CoverageRoot) ? 1 : 0;
+            foreach (var child in node.Children)
             {
-                var section = sections[i];
-                bool isParent = false;
-                
-                // Only check following sections since list is sorted
-                for (int j = i + 1; j < sections.Count; j++)
-                {
-                    var other = sections[j];
-                    
-                    // If other section starts after this one ends, no more children possible
-                    if (other.Offset >= section.Offset + section.Length)
-                        break;
-                    
-                    // Check if other is contained within section
-                    if (other.Offset >= section.Offset && 
-                        other.Offset + other.Length <= section.Offset + section.Length)
-                    {
-                        isParent = true;
-                        break;
-                    }
-                }
-                
-                parentMap[section] = isParent;
+                count += CountNodes(child, countSkipped);
             }
-            
-            return parentMap;
+            return count;
         }
 
-        private Dictionary<ParsedSection, byte[]> PreloadSectionData(List<ParsedSection> sections)
+        private Dictionary<CoverageNode, byte[]> PreloadAllSectionData(CoverageNode root)
         {
-            var data = new Dictionary<ParsedSection, byte[]>();
-            
-            foreach (var section in sections)
-            {
-                // Only cache small sections (up to 64 bytes) to avoid memory issues
-                if (section.Length <= 64)
-                {
-                    _stream.Position = section.Offset;
-                    byte[] buffer = new byte[section.Length];
-                    _stream.Read(buffer, 0, (int)section.Length);
-                    data[section] = buffer;
-                }
-            }
-            
+            var data = new Dictionary<CoverageNode, byte[]>();
+            PreloadNodeData(root, data);
             return data;
         }
 
-        private List<MergedSection> MergeSections(List<ParsedSection> parsed, List<SkippedSection> skipped)
+        private void PreloadNodeData(CoverageNode node, Dictionary<CoverageNode, byte[]> data)
         {
-            var result = new List<MergedSection>();
-            int parsedIdx = 0;
-            int skippedIdx = 0;
-
-            while (parsedIdx < parsed.Count || skippedIdx < skipped.Count)
+            if (node.Length > 0 && node.Length <= 64 && !node.IsSkipped)
             {
-                ParsedSection? nextParsed = parsedIdx < parsed.Count ? parsed[parsedIdx] : null;
-                SkippedSection? nextSkipped = skippedIdx < skipped.Count ? skipped[skippedIdx] : null;
-
-                if (nextParsed != null && (nextSkipped == null || nextParsed.Offset <= nextSkipped.Offset))
+                try
                 {
-                    // Collect consecutive parsed sections into a table group
-                    var tableSections = new List<ParsedSection>();
-                    long tableStart = nextParsed.Offset;
-                    long tableEnd = tableStart;
-
-                    while (parsedIdx < parsed.Count)
-                    {
-                        var section = parsed[parsedIdx];
-                        
-                        // Check if this section overlaps or is adjacent to the current group
-                        if (section.Offset <= tableEnd)
-                        {
-                            tableSections.Add(section);
-                            tableEnd = Math.Max(tableEnd, section.Offset + section.Length);
-                            parsedIdx++;
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-
-                    result.Add(new MergedSection
-                    {
-                        Offset = tableStart,
-                        Length = tableEnd - tableStart,
-                        IsTable = true,
-                        ParsedSections = tableSections
-                    });
+                    _stream.Position = node.Offset;
+                    byte[] buffer = new byte[node.Length];
+                    _stream.ReadExactly(buffer, 0, (int)node.Length);
+                    data[node] = buffer;
                 }
-                else if (nextSkipped != null)
+                catch
                 {
-                    result.Add(new MergedSection
-                    {
-                        Offset = nextSkipped.Offset,
-                        Length = nextSkipped.Length,
-                        IsTable = false,
-                        Reason = nextSkipped.Reason
-                    });
-                    skippedIdx++;
+                    // Skip if read fails
                 }
             }
 
-            return result;
+            foreach (var child in node.Children)
+            {
+                PreloadNodeData(child, data);
+            }
         }
 
-        private void AddSectionsTable(StringBuilder sb, List<ParsedSection> sections, 
-            Dictionary<ParsedSection, bool> parentMap, Dictionary<ParsedSection, byte[]> sectionData)
+        private void ProcessNodesAsTable(StringBuilder sb, List<CoverageNode> nodes, int indentLevel, Dictionary<CoverageNode, byte[]> sectionData)
         {
-            // Output table header
-            sb.AppendLine("| offset | type |         hex |           parsed | description             |");
-            sb.AppendLine("|-------:|------|------------:|-----------------:|-------------------------|");
-
-            foreach (var section in sections)
+            var sortedNodes = nodes.OrderBy(n => n.Offset).ToList();
+            
+            foreach (var node in sortedNodes)
             {
-                bool isParent = parentMap[section];
-                
-                if (isParent)
+                string indent = indentLevel > 0 ? new string('-', indentLevel) + " " : "";
+                string description = indent + node.Description;
+                string type = node.IsSkipped ? "skip" : node.Type ?? InferTypeFromLength(node.Length);
+
+                if (node.Children.Count > 0)
                 {
-                    // Parent section - description only
-                    sb.AppendLine($"| {section.Offset:X6} |      |             |                  | {section.Description,-24}|");
+                    // Parent node - just show description, no type/hex/parsed
+                    sb.AppendLine($"| {node.Offset:X6} | {node.Offset,6} | {type,-6} | {"",-20} | {"",-9} | {description,-21} |");
+                    
+                    // Recursively process children with increased indent
+                    ProcessNodesAsTable(sb, node.Children, indentLevel + 1, sectionData);
                 }
                 else
                 {
-                    // Leaf section - full details
-                    string type = InferType(section.Length);
-                    string hex = GetHexString(section, sectionData);
-                    string parsed = ParseValue(section, type, sectionData);
+                    // Leaf node - show all details
+                    string hex = GetHexForTable(node, sectionData);
+                    string parsed = node.IsSkipped ? "" : GetParsedForTable(node, type, sectionData);
                     
-                    sb.AppendLine($"| {section.Offset:X6} | {type,-4} | {hex,11} | {parsed,16} | {section.Description,-24}|");
+                    sb.AppendLine($"| {node.Offset:X6} | {node.Offset,6} | {type,-6} | {hex,20} | {parsed,9} | {description,-21} |");
                 }
             }
-
-            sb.AppendLine();
         }
 
-        private class MergedSection
-        {
-            public long Offset { get; init; }
-            public long Length { get; init; }
-            public bool IsTable { get; init; }
-            public List<ParsedSection>? ParsedSections { get; init; }
-            public string? Reason { get; init; }
-        }
-
-        private string InferType(long length)
+        private static string InferTypeFromLength(long length)
         {
             return length switch
             {
@@ -438,60 +340,73 @@ namespace AsaSavegameToolkit
                 2 => "s2",
                 4 => "s4",
                 8 => "s8",
+                _ when length > 8 => "bytes",
                 _ => "??"
             };
         }
 
-        private string GetHexString(ParsedSection section, Dictionary<ParsedSection, byte[]> sectionData)
+        private string GetHexForTable(CoverageNode node, Dictionary<CoverageNode, byte[]> sectionData)
         {
             byte[] data;
             
-            if (sectionData.TryGetValue(section, out var cached))
+            if (sectionData.TryGetValue(node, out var cached))
             {
                 data = cached;
             }
             else
             {
-                _stream.Position = section.Offset;
-                int readLength = (int)Math.Min(section.Length, 64);
-                data = new byte[readLength];
-                _stream.Read(data, 0, readLength);
+                try
+                {
+                    _stream.Position = node.Offset;
+                    data = new byte[node.Length];
+                    _stream.ReadExactly(data, 0, (int)node.Length);
+                }
+                catch
+                {
+                    return "";
+                }
             }
             
-            int maxBytes = 8;
-            if (data.Length <= maxBytes)
+            // For table format, show first 3 and last 3 bytes with ellipsis for longer data
+            if (data.Length <= 8)
             {
                 return string.Join(" ", data.Select(b => $"{b:X2}"));
             }
             else
             {
-                // Show first 3 and last 3 bytes with ellipsis
                 string startHex = string.Join(" ", data.Take(3).Select(b => $"{b:X2}"));
                 string endHex = string.Join(" ", data.TakeLast(3).Select(b => $"{b:X2}"));
                 return $"{startHex} .. {endHex}";
             }
         }
 
-        private string ParseValue(ParsedSection section, string type, Dictionary<ParsedSection, byte[]> sectionData)
+        private string GetParsedForTable(CoverageNode node, string type, Dictionary<CoverageNode, byte[]> sectionData)
         {
+            if (node.Length > 8 || type == "bytes" || type == "skip")
+                return "";
+                
             try
             {
                 byte[] data;
                 
-                if (sectionData.TryGetValue(section, out var cached))
+                if (sectionData.TryGetValue(node, out var cached))
                 {
                     data = cached;
                 }
+                else if (node.Length <= 64)
+                {
+                    _stream.Position = node.Offset;
+                    data = new byte[node.Length];
+                    _stream.ReadExactly(data, 0, (int)node.Length);
+                }
                 else
                 {
-                    _stream.Position = section.Offset;
-                    data = new byte[section.Length];
-                    _stream.Read(data, 0, (int)section.Length);
+                    return "";
                 }
                 
                 return type switch
                 {
-                    "b1" => (data[0] != 0).ToString().ToLower(),
+                    "b1" or "s1" => (data[0] != 0).ToString().ToLower(),
                     "s2" => BitConverter.ToInt16(data, 0).ToString(),
                     "s4" => BitConverter.ToInt32(data, 0).ToString(),
                     "u4" => BitConverter.ToUInt32(data, 0).ToString(),
@@ -507,68 +422,6 @@ namespace AsaSavegameToolkit
             }
         }
 
-        private void AddHexDump(StringBuilder sb, long offset, long length)
-        {
-            sb.AppendLine("```");
-            sb.AppendLine("         00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F");
-            sb.AppendLine("       +------------------------------------------------");
-
-            long sectionStart = offset;
-            long sectionEnd = offset + length;
-            
-            // Align to 16-byte boundaries
-            long rowStart = (offset / 16) * 16;
-            long rowEnd = ((sectionEnd + 15) / 16) * 16;
-
-            byte[] buffer = new byte[16];
-
-            for (long rowOffset = rowStart; rowOffset < rowEnd; rowOffset += 16)
-            {
-                // Read the entire 16-byte row
-                _stream.Position = rowOffset;
-                int bytesRead = _stream.Read(buffer, 0, 16);
-
-                // Format row address (aligned to 16-byte boundary)
-                sb.Append($"{rowOffset:X6} | ");
-
-                // Output each byte in the row
-                for (int i = 0; i < 16; i++)
-                {
-                    long byteOffset = rowOffset + i;
-                    
-                    // Check if this byte is within the section
-                    if (byteOffset >= sectionStart && byteOffset < sectionEnd)
-                    {
-                        // Read actual byte value
-                        if (i < bytesRead)
-                        {
-                            sb.Append($"{buffer[i]:X2} ");
-                        }
-                        else
-                        {
-                            sb.Append("·· ");
-                        }
-                    }
-                    else
-                    {
-                        // Outside section - show placeholder
-                        sb.Append("·· ");
-                    }
-                }
-                sb.AppendLine();
-            }
-
-            sb.AppendLine("```");
-            sb.AppendLine();
-        }
-
-        private void AddUnknownSection(StringBuilder sb, long offset, long length)
-        {
-            sb.AppendLine($"## Unknown - Offset: {offset:X6} - Length {length}");
-            sb.AppendLine();
-
-            AddHexDump(sb, offset, length);
-        }
 
         public void Dispose()
         {
@@ -580,33 +433,56 @@ namespace AsaSavegameToolkit
         private class CoverageTracker : IDisposable
         {
             private readonly AsaArchive _archive;
-            private readonly long _startPosition;
-            private readonly string _type;
+            private readonly CoverageNode _node;
 
-            public CoverageTracker(AsaArchive archive, string type)
+            public CoverageTracker(AsaArchive archive, string type, string description)
             {
                 _archive = archive;
-                _startPosition = archive.Position;
-                _type = type;
+                
+                // Create new node and push to stack
+                _node = new CoverageNode
+                {
+                    Type = type,
+                    Description = description,
+                    Offset = archive.Position,
+                    Length = 0, // Will be set on dispose
+                    IsSkipped = false
+                };
+                
+                _archive._coverageStack.Push(_node);
             }
 
             public void Dispose()
             {
-                long length = _archive.Position - _startPosition;
-                if (length > 0)
+                // Pop from stack
+                var popped = _archive._coverageStack.Pop();
+                
+                // Set the length
+                popped.Length = _archive.Position - popped.Offset;
+                
+                // Add to parent's children (peek will give us parent since we just popped)
+                if (_archive._coverageStack.Count > 0)
                 {
-                    _archive.MarkParsed(_startPosition, length, _type);
+                    _archive._coverageStack.Peek().Children.Add(popped);
                 }
             }
         }
+    }
 
-        private class NullTracker : IDisposable
-        {
-            public static NullTracker Shared = new();
+    /// <summary>
+    /// Represents a node in the hierarchical coverage tree
+    /// </summary>
+    public class CoverageNode
+    {
+        public long Offset { get; init; }
+        public long Length { get; set; }
+        public required string Description { get; init; }
+        public required string Type { get; init; }
+        public bool IsSkipped { get; init; }
+        public string? Reason { get; init; }
+        public List<CoverageNode> Children { get; } = [];
+        public IEnumerable<CoverageNode> Descendants => Children.SelectMany(x => x.Children.Prepend(x));
 
-            public void Dispose()
-            {
-            }
-        }
+        public override string ToString() => $"[{Offset:X8}-{Offset + Length - 1:X8}] {Description} ({Children.Count} children)";
     }
 }

@@ -1,0 +1,15 @@
+{
+    "Guid": "00ce4d67-41b0-ec80-ea43-878fdc562442", 
+    "ClassName": {"Name": "NPCZoneManager", "Instance": 0}, 
+    "IsItem": false, 
+    "Names": [ {"Name": "NPCZoneManager", "Instance": 199} ], 
+    "Properties": [
+        {"Name": "FirstUpdateTime"    , "Type": "DoubleProperty", "Index": 0, "Value": 100000001.16736649}, 
+        {"Name": "NumNPCSpawned"      , "Type": "IntProperty"   , "Index": 0, "Value": 4                 }, 
+        {"Name": "LastIncreaseNPCTime", "Type": "DoubleProperty", "Index": 0, "Value": 100000002.16833317}  
+    ], 
+    "DataFileIndex": 0, 
+    "PropertyOffset": 45, 
+    "ClassString": "NPCZoneManager", 
+    "ParentNames": []
+}

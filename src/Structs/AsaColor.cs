@@ -9,7 +9,7 @@ namespace AsaSavegameToolkit.Structs
 
         public AsaColor(AsaArchive archive)
         {
-            using var _ = archive.Track("color");
+            using var _ = archive.Track("color", string.Empty);
             R = archive.ReadByte("R");
             G = archive.ReadByte("G");
             B = archive.ReadByte("B");
