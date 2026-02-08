@@ -29,6 +29,6 @@ dotnet test
 The project uses GitHub Actions for continuous integration:
 - **Build and Test**: Builds and tests on Ubuntu
 - **Code Coverage**: Generates coverage reports
-- **Release Artifacts**: Creates nuget packages that will evenually be released to nuget.org
+- **Release Artifacts**: Creates nuget packages that will eventually be released to nuget.org
 
 See [.github/workflows/build-and-test.yml](.github/workflows/build-and-test.yml) for details.
