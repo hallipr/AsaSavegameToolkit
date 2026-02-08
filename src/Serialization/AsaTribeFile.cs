@@ -8,22 +8,18 @@ namespace AsaSavegameToolkit.Serialization
         public required DateTime Timestamp { get; set; }
         public required AsaTribe Tribe { get; set; }
 
-        public static bool TryRead(AsaArchive archive, string filePath, bool usePropertiesOffset, [NotNullWhen(true)] out AsaTribeFile? tribeFile)
+        public static AsaTribeFile Read(AsaArchive archive, string filePath, bool usePropertiesOffset)
         {
-            if (AsaTribe.TryRead(archive, usePropertiesOffset, out var parsed))
+            var parsed = AsaTribe.Read(archive, usePropertiesOffset);
+
+            var tribeFile = new AsaTribeFile
             {
-                tribeFile = new AsaTribeFile
-                {
-                    Path = filePath,
-                    Timestamp = File.GetLastWriteTimeUtc(filePath),
-                    Tribe = parsed
-                };
+                Path = filePath,
+                Timestamp = File.GetLastWriteTimeUtc(filePath),
+                Tribe = parsed
+            };
 
-                return true;
-            }
-
-            tribeFile = null;
-            return false;
+            return tribeFile;
         }
     }
 }

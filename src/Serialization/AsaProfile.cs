@@ -17,44 +17,28 @@ namespace AsaSavegameToolkit.Serialization
             Objects = [];
         }
 
-        public static bool TryRead(AsaArchive archive, [NotNullWhen(true)] out AsaProfile? result)
+        public static AsaProfile Read(AsaArchive archive)
         {
             ArgumentNullException.ThrowIfNull(archive);
 
-            try
+            archive.ReadInt32("version"); // profileVersion
+
+            int objectCount = archive.ReadInt32("count");
+
+            var objects = new List<AsaObject>(objectCount);
+
+            for (int i = 0; i < objectCount; i++)
             {
-                _ = archive.ReadInt32("version"); // profileVersion
-                int profilesCount = archive.ReadInt32("count");
-
-                if (profilesCount == 0)
-                {
-                    result = null;
-                    return false;
-                }
-
-                var objects = new List<AsaObject>();
-
-                while (profilesCount-- > 0)
-                {
-                    if (AsaObject.TryRead(archive, out var obj))
-                    {
-                        objects.Add(obj);
-                    }
-                }
-
-                foreach (var obj in objects)
-                {
-                    obj.TryReadProperties(archive, false);
-                }
-
-                result = new AsaProfile { Objects = objects };
-                return true;
+                var obj = AsaObject.Read(archive);
+                objects.Add(obj);
             }
-            catch
+
+            foreach (var obj in objects)
             {
-                result = null;
-                return false;
+                obj.ReadProperties(archive, false);
             }
+
+            return new AsaProfile { Objects = objects };
         }
     }
 }

@@ -1,5 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
-
 namespace AsaSavegameToolkit.Serialization
 {
     public class AsaProfileFile
@@ -8,22 +6,18 @@ namespace AsaSavegameToolkit.Serialization
         public required DateTime Timestamp { get; set; }
         public required AsaProfile Profile { get; set; }
 
-        public static bool TryRead(AsaArchive archive, string filePath, [NotNullWhen(true)] out AsaProfileFile? profileFile)
+        public static AsaProfileFile Read(AsaArchive archive, string filePath)
         {
-            if (AsaProfile.TryRead(archive, out var parsed))
+            var parsed = AsaProfile.Read(archive);
+
+            var asaProfileFile = new AsaProfileFile
             {
-                profileFile = new AsaProfileFile
-                {
-                    Path = filePath,
-                    Timestamp = File.GetLastWriteTimeUtc(filePath),
-                    Profile = parsed
-                };
+                Path = filePath,
+                Timestamp = File.GetLastWriteTimeUtc(filePath),
+                Profile = parsed
+            };
 
-                return true;
-            }
-
-            profileFile = null;
-            return false;
+            return asaProfileFile;
         }
     }
 }

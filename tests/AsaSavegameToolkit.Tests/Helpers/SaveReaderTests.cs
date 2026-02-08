@@ -1,11 +1,12 @@
 ﻿using System.Diagnostics;
 
 using AsaSavegameToolkit.Serialization;
+using AsaSavegameToolkit.Tests.AsaSavegameClass;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace AsaSavegameToolkit.Tests.AsaSavegameClass;
+namespace AsaSavegameToolkit.Tests.Helpers;
 
 public class SaveReaderTests
 {
@@ -18,7 +19,7 @@ public class SaveReaderTests
         Assert.IsTrue(File.Exists(saveFilePath), $"Save file not found: {saveFilePath}");
 
         AsaSaveReader reader = new(saveFilePath, logger ?? NullLogger.Instance, readerSettings ?? AsaReaderSettings.None);
-        Assert.IsTrue(reader.TryRead(out AsaSaveGame? saveGame), "Failed to read save game");
+        var saveGame = reader.Read();
 
         return saveGame;
     }

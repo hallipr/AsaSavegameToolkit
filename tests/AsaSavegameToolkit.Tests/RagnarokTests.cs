@@ -1,5 +1,5 @@
 ﻿using AsaSavegameToolkit.Serialization;
-using AsaSavegameToolkit.Tests.AsaSavegameClass;
+using AsaSavegameToolkit.Tests.Helpers;
 
 namespace AsaSavegameToolkit.Tests;
 

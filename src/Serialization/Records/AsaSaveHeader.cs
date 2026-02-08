@@ -80,7 +80,7 @@ public class AsaSaveHeader
 
         int nameCount = archive.ReadInt32("count");
 
-        while (nameCount-- > 0)
+        for (int i = 0; i < nameCount; i++)
         {
             int nameIndex = archive.ReadInt32("index");
             if (archive.TryReadString("value", out var nameString))

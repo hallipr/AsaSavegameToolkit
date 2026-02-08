@@ -2,6 +2,7 @@
 
 using AsaSavegameToolkit.Serialization;
 using AsaSavegameToolkit.Tests.AsaSavegameClass;
+using AsaSavegameToolkit.Tests.Helpers;
 
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -37,7 +38,8 @@ public sealed partial class DebugOutputTests : SaveReaderTests
 
         var objectId = Guid.Parse("2c75c9c7-41d1-c606-5102-19b8edf21861");
 
-        Assert.IsTrue(reader.TryReadObject(objectId, out _));
+        var obj = reader.ReadObject(objectId);
+        Assert.IsNotNull(obj);
     }
 
     [TestMethod]
@@ -48,7 +50,7 @@ public sealed partial class DebugOutputTests : SaveReaderTests
         var fullPath = Path.Combine(TestSettings.AssetsDirectory, saveFile);
         AsaSaveReader reader = new(fullPath, NullLogger.Instance, readerSettings);
 
-        Assert.IsTrue(reader.TryRead(out var saveGame), "Should successfully read save game");
+        var saveGame = reader.Read();
         Assert.IsNotNull(saveGame);
 
         Assert.IsNotEmpty(reader.ParserCoverage, "Should contain parser coverage objects");

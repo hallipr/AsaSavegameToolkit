@@ -51,37 +51,28 @@ namespace AsaSavegameToolkit.Serialization
 
         public ConcurrentDictionary<string, CoverageNode> ParserCoverage { get; } = [];
 
-        public bool TryRead([NotNullWhen(true)] out AsaSaveGame? saveGame)
+        public AsaSaveGame Read()
         {
-            var success = true;
-
             if(_connection.State != System.Data.ConnectionState.Open)
             {
                 _connection.Open();
             }
 
-            if (!TryReadSaveHeaders(out var headers))
+            var saveGame = new AsaSaveGame
             {
-                // the rest of the file is pretty useless without a header
-                saveGame = null;
-                return false;
-            }
-
-            saveGame = new AsaSaveGame
-            {
-                SaveHeaders = headers
+                SaveHeaders = ReadSaveHeaders()
             };
 
-            success &= TryAddGameRecords(saveGame);
-            success &= TryAddActorTransforms(saveGame);
-            success &= TryAddGameModeCustomBytes(saveGame);
-            success &= TryAddTribeFiles(saveGame);
-            success &= TryAddProfileFiles(saveGame);
+            AddGameRecords(saveGame);
+            AddActorTransforms(saveGame);
+            AddGameModeCustomBytes(saveGame);
+            AddTribeFiles(saveGame);
+            AddProfileFiles(saveGame);
             
-            return success;
+            return saveGame;
         }
 
-        public bool TryReadObject(Guid objectId, [NotNullWhen(true)] out AsaGameObject? gameObject)
+        public AsaGameObject ReadObject(Guid objectId)
         {
             if (_connection.State != System.Data.ConnectionState.Open)
             {
@@ -90,11 +81,7 @@ namespace AsaSavegameToolkit.Serialization
 
             _logger.LogInformation("Reading header");
 
-            if (!TryReadSaveHeaders(out _))
-            {
-                gameObject = null;
-                return false;
-            }
+            ReadSaveHeaders();
 
             var keyBytes = objectId.ToArkByteArray();
 
@@ -104,69 +91,44 @@ namespace AsaSavegameToolkit.Serialization
 
             using var reader = commandData.ExecuteReader();
 
-            gameObject = null;
-
             if (!reader.Read())
             {
-                _logger.LogWarning("Unable to find game object with guid {Guid} in the database.", objectId);
-                return false;
+                throw new InvalidOperationException($"Unable to find game object with guid {objectId} in the database.");
             }
 
-            if (!TryGetSqlBytes(reader, 0, out var valueBytes))
-            {
-                _logger.LogWarning("Unable to read bytes from the database.");
-                return false;
-            }
+            var valueBytes = GetSqlBytes(reader, 0);
 
-            return TryParseGameObject(objectId, valueBytes, out gameObject);
+            return ParseGameObject(objectId, valueBytes);
         }
 
-        private bool TryReadSaveHeaders([NotNullWhen(true)] out AsaSaveHeader[] headers)
+        private AsaSaveHeader[] ReadSaveHeaders()
         {
             // The header provides the name table, so we just pass null when reading SaveHeader 
-            if (TryProcessCustomTableRows("SaveHeader", (row, archive) => AsaSaveHeader.Read(archive), out var records))
+            var records = ProcessCustomTableRows("SaveHeader", (row, archive) => AsaSaveHeader.Read(archive));
+            var firstHeader = records.FirstOrDefault();
+
+            if (firstHeader != null)
             {
-                var firstHeader = records.FirstOrDefault();
-
-                if (firstHeader != null)
-                {
-                    SaveVersion = firstHeader.SaveVersion;
-                    NameTable = firstHeader.NameTable;
-                }
-
-                headers = [.. records];
-                return true;
+                SaveVersion = firstHeader.SaveVersion;
+                NameTable = firstHeader.NameTable;
             }
 
-            headers = [];
-            return false;
+            return [.. records];
         }
 
-        private bool TryAddActorTransforms(AsaSaveGame saveGame)
+        private void AddActorTransforms(AsaSaveGame saveGame)
         {
-            var success = TryProcessCustomTableRows("ActorTransforms", (row, archive) =>
-            {
-                return ActorTransformsRecord.TryRead(row, archive, out var record) ? record : null;
-            }, out var records);
-
-            saveGame.ActorTransforms = records?.ToArray() ?? [];
-
-            return success;
+            saveGame.ActorTransforms = ProcessCustomTableRows("ActorTransforms", ActorTransformsRecord.Read).ToArray();
         }
 
-        private bool TryAddGameModeCustomBytes(AsaSaveGame saveGame)
+        private void AddGameModeCustomBytes(AsaSaveGame saveGame)
         {
-            var success = TryProcessCustomTableRows("GameModeCustomBytes", (row, archive) =>
-            {
-                return GameModeCustomBytesRecord.TryRead(archive, out var record) ? record : null;
-            }, out var records);
+            var records = ProcessCustomTableRows("GameModeCustomBytes", (row, archive) => GameModeCustomBytesRecord.Read(archive));
 
-            saveGame.GameModeCustomBytes = records?.ToArray() ?? [];
-
-            return success;
+            saveGame.GameModeCustomBytes = [.. records];
         }
 
-        private bool TryAddGameRecords(AsaSaveGame saveGame)
+        private void AddGameRecords(AsaSaveGame saveGame)
         {
             using var commandData = new SqliteCommand("SELECT key, value FROM game", _connection);
             using var reader = commandData.ExecuteReader();
@@ -175,17 +137,15 @@ namespace AsaSavegameToolkit.Serialization
 
             while (reader.Read())
             {
-                if (TryGetSqlBytes(reader, 0, out var keyBytes) &&
-                    TryGetSqlBytes(reader, 1, out var valueBytes))
-                {
-                    Guid guid = keyBytes.ToArkGuid();
-                    gameRows.TryAdd(guid, valueBytes);
-                }
+                var keyBytes = GetSqlBytes(reader, 0);
+                var valueBytes = GetSqlBytes(reader, 1);
+                Guid guid = keyBytes.ToArkGuid();
+                gameRows.Add(guid, valueBytes);
             }
 
             if (gameRows.Count == 0)
             {
-                return false;
+                throw new InvalidOperationException("No game records found in the save file.");
             }
 
             var parsedGameRecords = new ConcurrentDictionary<Guid, AsaGameObject>();
@@ -194,19 +154,21 @@ namespace AsaSavegameToolkit.Serialization
             {
                 var (objectId, objectBytes) = gameRow;
 
-                if (TryParseGameObject(objectId, objectBytes, out var gameRecord))
+                try
                 {
+                    var gameRecord = ParseGameObject(objectId, objectBytes);
                     parsedGameRecords.AddOrUpdate(objectId, gameRecord, (_, _) =>
                     {
                         _logger.LogWarning("Replacing game object with guid {Guid}. This may indicate duplicate entries in the database or a collision. Returning the new object.", objectId);
                         return gameRecord;
                     });
                 }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to parse game object {ObjectId}", objectId);
+                    throw;
+                }
             });
-
-            // parsedGameRecords will only contain the successfully parsed records, so the count may be less than the
-            // total number of game rows. We consider this a successful read if every row was successfully parsed, but
-            // we still want to return the successfully parsed records even if some failed.
 
             var gameRecords = saveGame.GameRecords;
             gameRecords.Clear();
@@ -215,254 +177,227 @@ namespace AsaSavegameToolkit.Serialization
             {
                 gameRecords.Add(guid, obj);
             }
-
-            return gameRecords.Count == gameRows.Count;
         }
 
-        private bool TryParseGameObject(Guid objectId, byte[] objectData, [NotNullWhen(true)] out AsaGameObject? gameObject)
+        private AsaGameObject ParseGameObject(Guid objectId, byte[] objectData)
         {
-            try
+            var keyString = objectId.ToString();
+            var debugSettings = GetDerivedReaderSettings($"game/{keyString[..2]}");
+
+            if (debugSettings.HasOutput)
             {
-                var keyString = objectId.ToString();
-                var debugSettings = GetDerivedReaderSettings($"game/{keyString[..2]}");
+                File.WriteAllBytes(Path.Join(debugSettings.OutputDirectory, $"{keyString}.bin"), objectData);
+            }
+
+            using var stream = new MemoryStream(objectData);
+            using var archive = new AsaArchive(_logger, stream, keyString, debugSettings)
+            {
+                NameTable = NameTable,
+                SaveVersion = SaveVersion
+            };
+
+            var gameObject = AsaGameObject.Read(objectId, archive);
+
+            if (debugSettings.HasOutput)
+            {
+                DebugOutput.WriteSerializedJson(Path.Join(debugSettings.OutputDirectory, $"{keyString}.json"), gameObject);
+            }
+
+            if (debugSettings.TrackCoverage)
+            {
+                ParserCoverage[archive.FileName] = archive.CoverageRoot;
 
                 if (debugSettings.HasOutput)
                 {
-                    File.WriteAllBytes(Path.Join(debugSettings.OutputDirectory, $"{keyString}.bin"), objectData);
+                    var report = archive.GenerageCoverageReport();
+                    File.WriteAllText(Path.Join(debugSettings.OutputDirectory, $"{keyString}_coverage.md"), report);
                 }
-
-                using var stream = new MemoryStream(objectData);
-                using var archive = new AsaArchive(_logger, stream, keyString, debugSettings)
-                {
-                    NameTable = NameTable,
-                    SaveVersion = SaveVersion
-                };
-
-                var success = AsaGameObject.TryRead(objectId, archive, out gameObject);
-
-                if (success && debugSettings.HasOutput)
-                {
-                    DebugOutput.WriteSerializedJson(Path.Join(debugSettings.OutputDirectory, $"{keyString}.json"), gameObject!);
-                }
-
-                if (debugSettings.TrackCoverage)
-                {
-                    ParserCoverage[archive.FileName] = archive.CoverageRoot;
-
-                    if (debugSettings.HasOutput)
-                    {
-                        var report = archive.GenerageCoverageReport();
-                        File.WriteAllText(Path.Join(debugSettings.OutputDirectory, $"{keyString}_coverage.md"), report);
-                    }
-                }
-
-                return success;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to parse game object {Key}", objectId);
-                gameObject = null;
-                return false;
-            }
+
+            return gameObject;
         }
 
-        private bool TryAddTribeFiles(AsaSaveGame saveGame)
+        private void AddTribeFiles(AsaSaveGame saveGame)
         {
             var debugSettings = GetDerivedReaderSettings("tribes");
             var tribeFiles = Directory.EnumerateFiles(_saveDirectory, "*.arktribe");
 
             var tribeBag = new ConcurrentBag<AsaTribeFile>();
-            var success = true;
+            var exceptions = new ConcurrentBag<Exception>();
+            
             Parallel.ForEach(tribeFiles, new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxCores }, filePath =>
             {
-                using var stream = new MemoryStream(File.ReadAllBytes(filePath));
-                using var archive = new AsaArchive(_logger, stream, filePath, debugSettings)
+                try
                 {
-                    NameTable = NameTable,
-                    SaveVersion = SaveVersion
-                };
-
-                if (AsaTribeFile.TryRead(archive, filePath, usePropertiesOffset: true, out var parsed))
-                {
-                    tribeBag.Add(parsed);
-                }
-                else
-                {
-                    Interlocked.Exchange(ref success, false);
-                }
-
-                if (debugSettings.HasOutput)
-                {
-                    var outputPath = Path.Join(debugSettings.OutputDirectory, Path.GetFileName(filePath));
-                    File.Copy(filePath, outputPath, overwrite: true);
-
-                    if (parsed != null)
+                    using var stream = new MemoryStream(File.ReadAllBytes(filePath));
+                    using var archive = new AsaArchive(_logger, stream, filePath, debugSettings)
                     {
+                        NameTable = NameTable,
+                        SaveVersion = SaveVersion
+                    };
+
+                    var parsed = AsaTribeFile.Read(archive, filePath, usePropertiesOffset: true);
+
+                    tribeBag.Add(parsed);
+
+                    if (debugSettings.HasOutput)
+                    {
+                        var outputPath = Path.Join(debugSettings.OutputDirectory, Path.GetFileName(filePath));
+                        File.Copy(filePath, outputPath, overwrite: true);
                         DebugOutput.WriteSerializedJson(Path.ChangeExtension(outputPath, ".json"), parsed);
+
+                        if (debugSettings.TrackCoverage)
+                        {
+                            var report = archive.GenerageCoverageReport();
+                            File.WriteAllText(Path.ChangeExtension(outputPath, "_coverage.md"), report);
+                        }
                     }
 
                     if (debugSettings.TrackCoverage)
                     {
-                        var report = archive.GenerageCoverageReport();
-                        File.WriteAllText(Path.ChangeExtension(outputPath, "_coverage.md"), report);
+                        ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
                     }
                 }
-
-                if (debugSettings.TrackCoverage)
+                catch (Exception ex)
                 {
-                    ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
+                    _logger.LogError(ex, "Failed to read tribe file {FilePath}", filePath);
+                    exceptions.Add(ex);
                 }
             });
 
             saveGame.TribeFiles = [.. tribeBag];
-            return success;
-
+            
+            if (!exceptions.IsEmpty)
+            {
+                throw new AggregateException("Failed to read one or more tribe files", exceptions);
+            }
         }
 
-        private bool TryAddProfileFiles(AsaSaveGame saveGame)
+        private void AddProfileFiles(AsaSaveGame saveGame)
         {
             var debugSettings = GetDerivedReaderSettings("profiles");
             var profileFiles = Directory.EnumerateFiles(_saveDirectory, "*.arkprofile");
 
             var parsedFiles = new ConcurrentBag<AsaProfileFile>();
-            var success = true;
+            var exceptions = new ConcurrentBag<Exception>();
+            
             Parallel.ForEach(profileFiles, new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxCores }, filePath =>
             {
-                using var stream = new MemoryStream(File.ReadAllBytes(filePath));
-                using var archive = new AsaArchive(_logger, stream, filePath, debugSettings)
+                try
                 {
-                    NameTable = NameTable,
-                    SaveVersion = SaveVersion
-                };
-
-                if (AsaProfileFile.TryRead(archive, filePath, out var parsed))
-                {
-                    parsedFiles.Add(parsed);
-                }
-                else
-                {
-                    Interlocked.Exchange(ref success, false);
-                }
-
-                if (debugSettings.HasOutput)
-                {
-                    var outputPath = Path.Join(debugSettings.OutputDirectory, Path.GetFileName(filePath));
-                    File.Copy(filePath, outputPath, overwrite: true);
-
-                    if (parsed != null)
+                    using var stream = new MemoryStream(File.ReadAllBytes(filePath));
+                    using var archive = new AsaArchive(_logger, stream, filePath, debugSettings)
                     {
+                        NameTable = NameTable,
+                        SaveVersion = SaveVersion
+                    };
+
+                    var parsed = AsaProfileFile.Read(archive, filePath);
+
+                    parsedFiles.Add(parsed);
+
+                    if (debugSettings.HasOutput)
+                    {
+                        var outputPath = Path.Join(debugSettings.OutputDirectory, Path.GetFileName(filePath));
+                        File.Copy(filePath, outputPath, overwrite: true);
                         DebugOutput.WriteSerializedJson(Path.ChangeExtension(outputPath, ".json"), parsed);
+
+                        if (debugSettings.TrackCoverage)
+                        {
+                            var report = archive.GenerageCoverageReport();
+                            File.WriteAllText(Path.ChangeExtension(outputPath, "_coverage.md"), report);
+                        }
                     }
 
                     if (debugSettings.TrackCoverage)
                     {
-                        var report = archive.GenerageCoverageReport();
-                        File.WriteAllText(Path.ChangeExtension(outputPath, "_coverage.md"), report);
+                        ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
                     }
                 }
-
-                if (debugSettings.TrackCoverage)
+                catch (Exception ex)
                 {
-                    ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
+                    _logger.LogError(ex, "Failed to read profile file {FilePath}", filePath);
+                    exceptions.Add(ex);
                 }
             });
 
             saveGame.ProfileFiles = [.. parsedFiles];
-            return success;
-
+            
+            if (!exceptions.IsEmpty)
+            {
+                throw new AggregateException("Failed to read one or more profile files", exceptions);
+            }
         }
 
-        private bool TryProcessCustomTableRows<T>(string key, Func<int, AsaArchive, T?> processSqlBytes, [NotNullWhen(true)] out List<T>? results)
+        private List<T> ProcessCustomTableRows<T>(string key, Func<int, AsaArchive, T?> processSqlBytes)
         {
             var debugSettings = GetDerivedReaderSettings("custom");
             using var command = new SqliteCommand($"SELECT value FROM custom WHERE key = '{key}'", _connection);
             using var reader = command.ExecuteReader();
 
-            results = [];
+            var results = new List<T>();
 
-            var success = true;
-            try
+            for (var row = 0; reader.Read(); row++)
             {
-                for (var row = 0; reader.Read(); row++)
+                var sqlBytes = GetSqlBytes(reader, 0);
+                
+                if (debugSettings.HasOutput)
                 {
-                    if (TryGetSqlBytes(reader, 0, out var sqlBytes))
+                    File.WriteAllBytes(Path.Join(debugSettings.OutputDirectory, $"{key}_{row}.bin"), sqlBytes);
+                }
+
+                using var stream = new MemoryStream(sqlBytes);
+                using var archive = new AsaArchive(_logger, stream, $"{key}_{row}", debugSettings)
+                {
+                    NameTable = NameTable ?? []
+                };
+
+                var result = processSqlBytes(row, archive);
+
+                if (result != null)
+                {
+                    results.Add(result);
+
+                    if (debugSettings.HasOutput)
                     {
-                        if (debugSettings.HasOutput)
-                        {
-                            File.WriteAllBytes(Path.Join(debugSettings.OutputDirectory, $"{key}_{row}.bin"), sqlBytes);
-                        }
+                        DebugOutput.WriteSerializedJson(Path.Join(debugSettings.OutputDirectory, $"{key}_{row}.json"), result);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Null result processing custom table row with key {Key} at index {Row}", key, row);
+                }
 
-                        using var stream = new MemoryStream(sqlBytes);
-                        using var archive = new AsaArchive(_logger, stream, $"{key}_{row}", debugSettings)
-                        {
-                            NameTable = NameTable ?? []
-                        };
+                if (debugSettings.TrackCoverage)
+                {
+                    ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
 
-                        var result = processSqlBytes(row, archive);
-
-                        if (result != null)
-                        {
-                            results.Add(result);
-
-                            if (debugSettings.HasOutput)
-                            {
-                                DebugOutput.WriteSerializedJson(Path.Join(debugSettings.OutputDirectory, $"{key}_{row}.json"), result);
-                            }
-                        }
-                        else
-                        {
-                            // continue processing other rows, but mark overall result as failure since at least one row failed to process
-                            success = false;
-                            _logger.LogError("Error processing custom table row with key {Key} at index {Row}", key, row);
-                        }
-
-                        if (debugSettings.TrackCoverage)
-                        {
-                            ParserCoverage.TryAdd(archive.FileName, archive.CoverageRoot);
-
-                            if (debugSettings.HasOutput)
-                            {
-                                var report = archive.GenerageCoverageReport();
-                                File.WriteAllText(Path.Join(debugSettings.OutputDirectory, $"{key}_{row}_coverage.md"), report);
-                            }
-                        }
+                    if (debugSettings.HasOutput)
+                    {
+                        var report = archive.GenerageCoverageReport();
+                        File.WriteAllText(Path.Join(debugSettings.OutputDirectory, $"{key}_{row}_coverage.md"), report);
                     }
                 }
             }
-            catch(Exception ex)
-            {
-                _logger.LogError(ex, "Exception occurred while processing custom table rows with key {Key}", key);
-                success = false;
-            }
 
-
-            return success;
+            return results;
         }
 
-        private static bool TryGetSqlBytes(SqliteDataReader reader, int fieldIndex, [NotNullWhen(true)] out byte[]? bytes)
+        private static byte[] GetSqlBytes(SqliteDataReader reader, int fieldIndex)
         {
-            try
-            {
-                const int ChunkSize = 2 * 1024;
-                byte[] buffer = new byte[ChunkSize];
-                long bytesRead;
-                long fieldOffset = 0;
+            const int ChunkSize = 2 * 1024;
+            byte[] buffer = new byte[ChunkSize];
+            long bytesRead;
+            long fieldOffset = 0;
 
-                using var stream = new MemoryStream();
-                while ((bytesRead = reader.GetBytes(fieldIndex, fieldOffset, buffer, 0, buffer.Length)) > 0)
-                {
-                    stream.Write(buffer, 0, (int)bytesRead);
-                    fieldOffset += bytesRead;
-                }
-
-                bytes = stream.ToArray();
-                return true;
-            }
-            catch
+            using var stream = new MemoryStream();
+            while ((bytesRead = reader.GetBytes(fieldIndex, fieldOffset, buffer, 0, buffer.Length)) > 0)
             {
-                bytes = null;
-                return false;
+                stream.Write(buffer, 0, (int)bytesRead);
+                fieldOffset += bytesRead;
             }
+
+            return stream.ToArray();
         }
 
         private AsaReaderSettings GetDerivedReaderSettings(string subdirectory)
